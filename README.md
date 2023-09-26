@@ -7,7 +7,7 @@ Already running a raster renderning osm stack ? These SQL functions make it
 possible to also serve 
 [MVT](https://docs.mapbox.com/data/tilesets/guides/vector-tiles-standards/)
 vector tiles in the openmaptiles vectortile 
-[schema] (https://openmaptiles.org/schema/).
+[schema] (https://openmaptiles.org/schema/) .
 This can then be used by multiple styles to render beautiful vector maps in the
 client browser.
 

@@ -3,11 +3,11 @@ From a osm2pgsql-imported rendering PostgreSQL+PostGIS database, serve omt-schem
 
 # Motivation
 
-Already running a raster renderning osm stack ? These SQL functions make it
+Already running a raster rendering osm stack ? These SQL functions make it
 possible to also serve 
 [MVT](https://docs.mapbox.com/data/tilesets/guides/vector-tiles-standards/)
 vector tiles in the openmaptiles vectortile 
-[schema] (https://openmaptiles.org/schema/) .
+[schema](https://openmaptiles.org/schema/) .
 This can then be used by multiple styles to render beautiful vector maps in the
 client browser.
 
@@ -15,18 +15,17 @@ client browser.
 
 A little selection of styles
 * [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
-* [Positron] (https://github.com/openmaptiles/positron-gl-style)
-* [MapTiler Basic] (https://github.com/openmaptiles/maptiler-basic-gl-style)
+* [Positron](https://github.com/openmaptiles/positron-gl-style)
+* [MapTiler Basic](https://github.com/openmaptiles/maptiler-basic-gl-style)
 
 # Dependencies for a full pipeline
 
-* [osm2pgsql] (https://github.com/osm2pgsql-dev/osm2pgsql) and a
-[PostGIS] (https://postgis.net/) enabled PostgreSQL database
-* [pg\_tileserv] (https://github.com/CrunchyData/pg_tileserv)
+* [osm2pgsql](https://github.com/osm2pgsql-dev/osm2pgsql) and a
+[PostGIS](https://postgis.net/) enabled PostgreSQL database
+* [pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
 for serving the generated vector tiles
 * _Recommended_ : a file caching server, especially for your low-zoom tiles that
 can take a long time to generate.
-* 
 
 # Disclaimer
 
@@ -34,6 +33,28 @@ EXPERIMENTAL
 
 
 And this is even incomplete. A work in progress.
+
+### imposm3
+
+Most guides to do this recommend importing the database with 
+[imposm3](https://github.com/omniscale/imposm3).
+But I found nothing when data is already imported with `osm2pgsql`.
+These two tools produce a very different table layout, and the main
+aim of this SQL script is to adapt a subset of the `imposm3` produced
+schema for generating vectortiles, from the `osm2pgsql` schema.
+Referring to the schema as one is incorrect, because both tools powerfully
+allow configuring them.
+
+But when the database was already imported with one ?
+
+
+Or when the need for both mapnik.xml raster tiles and vectortiles comes up ?
+Is one supposed to use two complete copies of the same data ?
+
+
+Also, this "adapting" from one to the other is difficult and will always be a
+moving target. For now this script is best-effort and I try do document
+differences.
 
 ### Feature parity
 
@@ -67,29 +88,29 @@ At the end, a `length` with nonzero length should be generated if you have Switz
 maps data for Weiningen (hardcoded z/x/y of 16,34303,22938).
 This should also not produce an error. If everything worked, you can:
 * install
-[pg\_tileserv] (https://github.com/CrunchyData/pg_tileserv)
+[pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
 and give it the database connection configuration.
 * Visit the pg\_tileserv url root, and you should see `omt_all` under the 
 _Function Layers_ section.
 * Edit the `style.json` and replace the following:
 `
-"sources": {
-    "openmaptiles": {
-      "type": "vector",
-      "url": "https://api.maptiler.com/tiles/v3/tiles.json?key={key}"
-    }
-  },
+    "sources": {
+        "openmaptiles": {
+          "type": "vector",
+          "url": "https://api.maptiler.com/tiles/v3/tiles.json?key={key}"
+        }
+      },
 `
 
 
 with
 `
-"sources": {
-    "openmaptiles": {
-      "type": "vector",
-      "tiles": [
-        "https://tileserv.your.server/{z}/{x}/{y}.pbf"
-      ]
-    }
-  },
+    "sources": {
+        "openmaptiles": {
+          "type": "vector",
+          "tiles": [
+            "https://tileserv.your.server/{z}/{x}/{y}.pbf"
+          ]
+        }
+      },
 `

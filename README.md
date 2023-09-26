@@ -94,7 +94,6 @@ and give it the database connection configuration.
 _Function Layers_ section.
 * Edit the `style.json` and replace the following:
 
-
     "sources": {
         "openmaptiles": {
           "type": "vector",

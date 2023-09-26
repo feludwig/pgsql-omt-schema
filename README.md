@@ -93,18 +93,18 @@ and give it the database connection configuration.
 * Visit the pg\_tileserv url root, and you should see `omt_all` under the 
 _Function Layers_ section.
 * Edit the `style.json` and replace the following:
-`
+
+
     "sources": {
         "openmaptiles": {
           "type": "vector",
           "url": "https://api.maptiler.com/tiles/v3/tiles.json?key={key}"
         }
       },
-`
 
 
 with
-`
+
     "sources": {
         "openmaptiles": {
           "type": "vector",
@@ -113,4 +113,4 @@ with
           ]
         }
       },
-`
+

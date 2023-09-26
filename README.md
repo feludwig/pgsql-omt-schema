@@ -18,6 +18,25 @@ A little selection of styles
 * [Positron](https://github.com/openmaptiles/positron-gl-style)
 * [MapTiler Basic](https://github.com/openmaptiles/maptiler-basic-gl-style)
 
+# Requirements
+
+* `osm2pgsql` was run with `--hstore` containing all missing tags. For now, a mix
+of database columns and `tags->'colname'` accesses happen.
+Maybe this can all be summarized in a `.style` file for osm2pgsql; but applying it
+would require a reimport.
+
+* Tables `planet_osm_point`, `planet_osm_line` and `planet_osm_polygon` exist,
+are in the `public` schema and you have `SELECT` permissions.
+Their geometry column is called `way`.
+
+
+Also, lots of columns must exist and the script will just error out if they do
+not exist. Usually `tags->'column_name'` will contain the data
+
+
+**Planned**: generating indexes for all of these queries to make them faster,
+will require permissions for `CREATE INDEX`.
+
 # Dependencies for a full pipeline
 
 * [osm2pgsql](https://github.com/osm2pgsql-dev/osm2pgsql) and a

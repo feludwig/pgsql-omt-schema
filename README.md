@@ -80,19 +80,31 @@ unconditionally (this is temporary).
 
 # Usage
 
-* create the sql functions
+### Create the SQL functions
+
 `psql -d gis -f pgsql-omt-schema/omt-functions.sql`
-  - this should output a lot of `CREATE FUNCTION`s.
+
+
+this should output a lot of `CREATE FUNCTION`s.
+
+
 If your database schema is unexpected, an error will show up.
 At the end, a `length` with nonzero length should be generated if you have Switzerland
 maps data for Weiningen (hardcoded z/x/y of 16,34303,22938).
-This should also not produce an error. If everything worked, you can:
+This should also not produce an error.
+
+
+If everything worked, you can:
 * install
 [pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
 and give it the database connection configuration.
 * Visit the pg\_tileserv url root, and you should see `omt_all` under the 
 _Function Layers_ section.
-* Edit the `style.json` and replace the following:
+
+### Add tile url
+
+Edit the `style.json` and replace the following:
+
 
     "sources": {
         "openmaptiles": {

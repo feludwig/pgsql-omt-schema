@@ -139,7 +139,7 @@ with
         "openmaptiles": {
           "type": "vector",
           "tiles": [
-            "https://tileserv.your.server/{z}/{x}/{y}.pbf"
+            "https://tileserv.your.server/public.omt_all/{z}/{x}/{y}.pbf"
           ]
         }
       },

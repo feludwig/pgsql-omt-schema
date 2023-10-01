@@ -470,6 +470,7 @@ RETURN QUERY SELECT
   END) AS expressway,
   (CASE WHEN bicycle IN ('yes','1','designated','permissive') THEN 1
     WHEN bicycle IN ('no','dismount') THEN 0 ELSE NULL
+    --TODO: why not tags->'cycleway' &+ tags->'cycleway:left' and tags->'cycleway:right' ?
   END) AS cycleway, --NOTE: extension
   layer,
   tags->'level' AS level,

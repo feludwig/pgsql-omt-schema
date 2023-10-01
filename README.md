@@ -55,29 +55,42 @@ And this is even incomplete. A work in progress.
 
 ### imposm3
 
-Most guides to do this recommend importing the database with 
+Most guides to selfhost your own vectortiles recommend importing the database with 
 [imposm3](https://github.com/omniscale/imposm3).
 But I found nothing when data is already imported with `osm2pgsql`.
-These two tools produce a very different table layout, and the main
+These two tools produce a very different database schema, and the main
 aim of this SQL script is to adapt a subset of the `imposm3` produced
 schema for generating vectortiles, from the `osm2pgsql` schema.
 Referring to the schema as one is incorrect, because both tools powerfully
 allow configuring them.
 
-But when the database was already imported with one ?
+
+But when the database was already imported with `osm2pgsql` ?
 
 
 Or when the need for both mapnik.xml raster tiles and vectortiles comes up ?
-Is one supposed to use two complete copies of the same data ?
+Is one supposed to host two complete copies of the same data ?
 
 
-Also, this "adapting" from one to the other is difficult and will always be a
+Also, this "adapting" from one schema to the other is difficult and will always be a
 moving target. For now this script is best-effort and I try do document
-differences.
+differences. Changes requiring significant performance loss will probably not
+be considered.
+
+### Performance
+
+This is a balance between tile serving speed and disk usage/efficiency.
+Importing data with `imposm3` directly for your vectortile needs will
+usually be faster when serving clients. But the aim here is to make `osm2pgsql`-imported
+databases competitive and more versatile in the same situation.
+
+
+**Planned** Indexes should somewhat speed up queries. Though I still need to check how much
+additional space they can take up
 
 ### Feature parity
 
-Geometries are currently jsut returned from the database. This is very wasteful
+Geometries are currently just returned from the database. This is very wasteful
 for low zooms where a `ST_SimplifyPreserveTopology(geometry,200)` should be used.
 
 

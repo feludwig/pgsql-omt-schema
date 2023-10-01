@@ -1,0 +1,66 @@
+{
+  "version": 8,
+  "name": "Contours",
+  "bearing": 0,
+  "pitch": 0,
+  "sources": {
+    "contours": {
+      "type": "vector",
+      "tiles":[ 
+        "https://<ADD HERE:hostname>/public.contours_vector/{z}/{x}/{y}.pbf"
+      ]
+    }
+  },
+  "layers": [
+    {
+      "id": "contours100",
+      "type": "line",
+      "source": "contours",
+      "source-layer": "heights",
+      "filter" : [ "to-boolean", "height100" ],
+      "layout": {"line-cap": "round", "visibility": "visible"},
+      "paint": {
+        "line-color": [
+          "step", ["zoom"],
+          "#9cb197",
+          11, "#747b90",
+          14, "#855d62"
+        ],
+        "line-width": 0.7
+      }
+    },
+    {
+      "id": "contours50",
+      "type": "line",
+      "source": "contours",
+      "source-layer": "heights",
+      "filter" : [ "to-boolean", "height50" ],
+      "layout": {"line-cap": "round", "visibility": "visible"},
+      "paint": {
+        "line-color": [
+          "step", ["zoom"],
+          "transparent",
+          11, "#9cb197",
+          14, "#747b90"
+        ],
+        "line-width": 0.6
+      }
+    },
+    {
+      "id": "contours10",
+      "type": "line",
+      "source": "contours",
+      "source-layer": "heights",
+      "filter" : [ "to-boolean", "height10" ],
+      "layout": {"line-cap": "round", "visibility": "visible"},
+      "paint": {
+        "line-color": [
+          "step", ["zoom"],
+          "transparent",
+          14, "#9cb197"
+        ],
+        "line-width": 0.5
+      }
+    }
+  ]
+}

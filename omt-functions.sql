@@ -664,6 +664,7 @@ SELECT name,class,subclass,get_poi_class_rank(class) AS rank,agg_stop,level,laye
 		WHEN subclass IN ('swimming_area', 'swimming') THEN 'swimming'
 		WHEN subclass IN ('castle', 'ruins') THEN 'castle'
 		WHEN subclass IN ('atm') THEN 'atm'	
+    ELSE subclass
 	END) AS class,
 	subclass,agg_stop,level,layer,indoor,geom
 	FROM (SELECT name,
@@ -871,8 +872,8 @@ SELECT name,class,subclass,get_poi_class_rank(class) AS rank,agg_stop,level,laye
 		0 AS agg_stop, -- TODO: not implemented
 		tags->'level' AS level,layer,
 		(CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
-		ST_AsMVTGeom(way,bounds_geom) AS geom
-	FROM planet_osm_point
+		ST_AsMVTGeom(ST_Centroid(way),bounds_geom) AS geom
+	FROM planet_osm_polygon
 	WHERE (
 		waterway IN ('dock') OR building IN ('dormitory')
 		OR leisure IN ('dog_park','escape_game','garden','golf_course','ice_rink',

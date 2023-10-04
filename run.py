@@ -159,7 +159,7 @@ if __name__=='__main__' :
     sql_script=t.render(**{
         'with_osm_id':True
     })
-    if sys.argv[2]=='--print' :
+    if len(sys.argv)>2 and sys.argv[2]=='--print' :
         print(sql_script)
     else :
         c.execute(sql_script)

@@ -679,8 +679,9 @@ SELECT name,class,subclass,
 			'nightclub','nursing_home','parking','pharmacy','place_of_worship','police',
 			'parcel_locker','post_box','post_office','prison','pub','public_building',
 			'recycling','restaurant','school','shelter','swimming_pool','taxi','telephone',
-			'theatre','toilets','townhall','town_hall','university','veterinary','waste_basket')
+			'theatre','toilets','town_hall','university','veterinary','waste_basket')
 			THEN amenity
+    WHEN amenity='townhall' THEN 'town_hall'
 		WHEN aerialway IN ('station') THEN aerialway
 		END) AS subclass,
 		(CASE WHEN

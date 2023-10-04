@@ -161,33 +161,30 @@ CREATE TYPE row_omt_waterway AS (
 );
 
 
--- create function returning a table_omt_transportation_n_t, WITH name.
 
 --utilities
-CREATE OR REPLACE FUNCTION text_to_real_0(text) RETURNS real AS $$
-BEGIN
-RETURN CAST($1 AS REAL);
-  EXCEPTION
-  WHEN invalid_text_representation THEN
-  RETURN 0.0;
-end;
-$$ LANGUAGE 'plpgsql' IMMUTABLE;
+CREATE OR REPLACE FUNCTION text_to_real_0(data text) RETURNS real
+AS $$
+SELECT CASE
+  WHEN data~E'^\\d+(\\.\\d+)?$' THEN data::real
+  WHEN data~E'^\\.\\d+$' THEN ('0'||data)::real -- '.9' -> '0.9' -> 0.9
+  ELSE 0.0 END;
+$$
+LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION text_to_int_null(text) RETURNS integer AS $$
-BEGIN
-RETURN CAST($1 AS INTEGER);
-  EXCEPTION
-  WHEN invalid_text_representation THEN
-  RETURN NULL;
-end;
-$$ LANGUAGE 'plpgsql' IMMUTABLE;
+CREATE OR REPLACE FUNCTION text_to_int_null(data text) RETURNS integer
+AS $$
+SELECT CASE
+  WHEN data~E'^\\d$' THEN data::integer
+  ELSE NULL END;
+$$
+LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION public.omt_landuse(bounds_geom geometry,z integer)
 RETURNS setof row_omt_landuse
 AS $$
-BEGIN
-RETURN QUERY SELECT
+SELECT
   (CASE
     WHEN landuse IN ('railway','cemetery','miltary','quarry','residential','commercial',
       'industrial','garages','retail') THEN landuse
@@ -211,33 +208,23 @@ WHERE (landuse IN ('railway','cemetery','miltary','quarry','residential','commer
     (z>=14 OR way_area>1500)
     AND (z>=11 OR way_area>8000)
   );
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION public.omt_aeroway(bounds_geom geometry)
 RETURNS setof row_omt_aeroway
 AS $$
-BEGIN
-RETURN QUERY
 SELECT ref,aeroway AS class,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM planet_osm_polygon
 WHERE aeroway IS NOT NULL AND ST_Intersects(way,bounds_geom);
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION public.omt_landcover(bounds_geom geometry,z integer)
 RETURNS setof row_omt_landcover
 AS $$
-BEGIN
-RETURN QUERY
 SELECT 
   ( CASE -- resolve the class from the subclass
     WHEN subclass IN ('farmland', 'farm', 'orchard', 'vineyard', 'plant_nursery' ) THEN 'farmland'
@@ -274,19 +261,14 @@ SELECT
     (z>=14 OR way_area>1500) AND
     (z>=12 OR way_area>8000)
   )) AS foo;
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 
 CREATE OR REPLACE FUNCTION public.omt_building(bounds_geom geometry,z integer)
 RETURNS setof row_omt_building
 AS $$
-BEGIN
-  RETURN QUERY
 SELECT text_to_real_0(tags->'height') AS render_height,
   COALESCE(text_to_real_0(tags->'min_height'),
     text_to_real_0(tags->'building:levels')*2.5)::real AS render_min_height,
@@ -298,18 +280,13 @@ WHERE building IS NOT NULL AND (tags->'location' != 'underground' OR tags->'loca
    AND ST_Intersects(way,bounds_geom) AND (
     (z>=14 OR way_area>=1700) AND (z>12) -- show no buildings above z>=12
   );
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION public.omt_park(bounds_geom geometry)
 RETURNS setof row_omt_park
 AS $$
-BEGIN
-  RETURN QUERY
 SELECT name,
   (CASE
     WHEN boundary='aboriginal_lands' THEN boundary
@@ -320,18 +297,13 @@ SELECT name,
 FROM planet_osm_polygon
 WHERE (boundary IN ('national_park','protected_area') OR leisure='nature_reserve')
    AND ST_Intersects(way,bounds_geom);
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION public.omt_boundary(bounds_geom geometry, z integer)
 RETURNS setof row_omt_boundary
 AS $$
-BEGIN
-  RETURN QUERY
 SELECT admin_level::integer AS admin_level,
   tags->'left:country' AS adm0_l,tags->'right:country' AS adm0_r,
   0 AS disputed,
@@ -349,52 +321,33 @@ WHERE (boundary IN ('administrative') OR CASE
    AND (z>=8 OR admin_level IN ('1','2','3','4'))
    AND (z>=2 OR admin_level IN ('1','2','3'))
    AND ST_Intersects(way,bounds_geom);
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION public.omt_housenumber(bounds_geom geometry)
 RETURNS setof row_omt_housenumber
 AS $$
-BEGIN
-  RETURN QUERY
 SELECT "addr:housenumber" AS housenumber,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_line
-WHERE "addr:housenumber" IS NOT NULL AND ST_Intersects(way,bounds_geom)
-UNION
-SELECT "addr:housenumber" AS housenumber,
-  ST_AsMVTGeom(ST_Centroid(way),bounds_geom) AS geom
-FROM planet_osm_polygon
+  ST_AsMVTGeom((CASE
+      WHEN tablefrom = 'point' THEN way
+      ELSE ST_Centroid(way) END),bounds_geom) AS geom
+FROM (
+  SELECT "addr:housenumber",way,'line' AS tablefrom FROM planet_osm_line
+  UNION ALL
+  SELECT "addr:housenumber",way,'point' AS tablefrom FROM planet_osm_point
+  UNION ALL
+  SELECT "addr:housenumber",way,'polygon' AS tablefrom FROM planet_osm_polygon)
+    AS layer_housenumber
   -- obviously don't scan on the ST_Centroid(way) because those are not indexed
-WHERE "addr:housenumber" IS NOT NULL AND ST_Intersects(way,bounds_geom);
-END;
+WHERE "addr:housenumber" IS NOT NULL AND ST_Intersects(way,bounds_geom)
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-
-CREATE OR REPLACE FUNCTION public.omt_transportation(bounds_geom geometry,z integer)
-RETURNS setof row_omt_named_transportation
-AS $$
-BEGIN
-  RETURN QUERY
-    SELECT * FROM public.line_omt_transportation(bounds_geom,z);
-    -- add UNION poly_omt_transportation(
-END;
-$$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION public.line_omt_transportation(bounds_geom geometry,z integer)
 RETURNS setof row_omt_named_transportation
 AS $$
-BEGIN
-RETURN QUERY SELECT 
+SELECT
   name,
   ref,
 -- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
@@ -505,26 +458,27 @@ WHERE (
     'j-bar','mixed_lift')
   OR route IN ('bicycle') --NOTE:extension
 ) AND ST_Intersects(way,bounds_geom);
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-
+CREATE OR REPLACE FUNCTION public.omt_transportation(bounds_geom geometry,z integer)
+RETURNS setof row_omt_named_transportation
+AS $$
+SELECT * FROM public.line_omt_transportation(bounds_geom,z);
+    -- add UNION poly_omt_transportation( :
   -- NEED tochange structure to read from point,line and polygon...
   -- from point
   --OR highway IN ('motorway_junction')
   -- from polygon
   --OR highway IN ('path','cycleway','bridleway','footway','corridor','pedestrian','steps')
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION public.omt_waterway(bounds_geom geometry,z integer)
 RETURNS setof row_omt_waterway
 AS $$
-BEGIN
-  RETURN QUERY
 SELECT name,waterway AS class,
   (CASE
     WHEN bridge IS NOT NULL AND bridge!='no' THEN 'bridge'
@@ -540,39 +494,32 @@ FROM planet_osm_line
 WHERE waterway IN ('stream','river','canal','drain','ditch')
   AND ST_Intersects(way,bounds_geom);
     --TODO: by-zoom specificities
-    -- TODO: error with dällikon dorfbach not showing
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
 
 CREATE OR REPLACE FUNCTION public.omt_place(bounds_geom geometry)
 RETURNS setof row_omt_place
 AS $$
-BEGIN RETURN QUERY
 SELECT name,admin_level::integer AS capital,
   place AS class,
   (tags->'ISO3166-1') AS iso_a2,
   z_order AS rank,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_polygon
-WHERE place IN ('island')
-  AND ST_Intersects(way,bounds_geom)
-UNION ALL
-SELECT name,admin_level::integer AS capital,
-  place AS class,
-  (tags->'ISO3166-1') AS iso_a2,
-  z_order AS rank,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
+    WHEN tablefrom='polygon' THEN ST_Centroid(way) END),bounds_geom) AS geom
+FROM (
+  SELECT name,place,admin_level,tags,z_order,way,'polygon' AS tablefrom
+  FROM planet_osm_polygon UNION ALL
+  SELECT name,place,admin_level,tags,z_order,way,'point' AS tablefrom
+  FROM planet_osm_point ) AS layer_place
   -- TODO: fix zürich affoltern not showing
-FROM planet_osm_point
-WHERE place IN ('continent','','country','state','province','city','town','village',
+  -- TODO: does zürich city have multiple centroids ? maybe the polygon and the point are both showing...
+-- distinguish tablefrom='point' -> WHERE place [only] IN ('island') ?
+WHERE place IN ('continent','country','state','province','city','town','village',
     'hamlet','subrb','quarter','neighbourhood','isolated_dwelling','island')
   AND ST_Intersects(way,bounds_geom);
-END;
 $$
-LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION get_poi_class_rank(class text)
     RETURNS int AS
@@ -613,7 +560,6 @@ $$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION public.omt_poi(bounds_geom geometry)
 RETURNS setof row_omt_poi
 AS $$
-BEGIN RETURN QUERY
   -- TODO: weiningen the farm does not show. also check maplibre-basic, osm-bright
   --    and osm-liberty styles
 SELECT name,class,subclass,
@@ -811,17 +757,14 @@ SELECT name,class,subclass,
 			'theatre','toilets','townhall','university','veterinary','waste_basket')
 		OR aerialway IN ('station')
 		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class) AS without_rank;
-END;
 $$
-LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 
 CREATE OR REPLACE FUNCTION public.omt_water(bounds_geom geometry)
 RETURNS setof row_omt_named_water
 AS $$
-BEGIN
-  RETURN QUERY
 SELECT name,osm_id AS id,
   (CASE
     WHEN water IN ('river') THEN 'river'
@@ -846,11 +789,8 @@ WHERE (covered IS NULL OR covered != 'yes') AND (
     OR landuse IN ('reservoir','basin','salt_pond'))
   AND ST_Intersects(way,bounds_geom);
     --TODO: by-zoom specificities
-END;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION public.omt_all(z integer, x integer, y integer)
 RETURNS bytea

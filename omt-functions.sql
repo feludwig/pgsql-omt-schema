@@ -535,6 +535,7 @@ SELECT CASE class
            WHEN 'stadium' THEN 90
            WHEN 'zoo' THEN 95
            WHEN 'town_hall' THEN 100
+           WHEN 'townhall' THEN 100
            WHEN 'campsite' THEN 110
            WHEN 'cemetery' THEN 115
            WHEN 'park' THEN 120
@@ -578,8 +579,8 @@ SELECT name,class,subclass,
 			'perfume','pet','photo','second_hand','shoes','sports','stationery',
 			'tailor','tattoo','ticket','tobacco','toys','travel_agency','watches',
 			'weapons','wholesale') THEN 'shop'
-    WHEN subclass IN ('townhall', 'public_building', 'courthouse', 'community_centre')
-			THEN 'townhall'
+    WHEN subclass IN ('townhall','town_hall', 'public_building', 'courthouse',
+      'community_centre') THEN 'town_hall'
     WHEN subclass IN ('golf', 'golf_course', 'miniature_golf') THEN 'golf'
 		WHEN subclass IN ('fast_food', 'food_court') THEN 'fast_food'
 		WHEN subclass IN ('park', 'bbq') THEN 'park'
@@ -678,7 +679,7 @@ SELECT name,class,subclass,
 			'nightclub','nursing_home','parking','pharmacy','place_of_worship','police',
 			'parcel_locker','post_box','post_office','prison','pub','public_building',
 			'recycling','restaurant','school','shelter','swimming_pool','taxi','telephone',
-			'theatre','toilets','townhall','university','veterinary','waste_basket')
+			'theatre','toilets','townhall','town_hall','university','veterinary','waste_basket')
 			THEN amenity
 		WHEN aerialway IN ('station') THEN aerialway
 		END) AS subclass,
@@ -754,7 +755,7 @@ SELECT name,class,subclass,
 			'nightclub','nursing_home','parking','pharmacy','place_of_worship','police',
 			'parcel_locker','post_box','post_office','prison','pub','public_building',
 			'recycling','restaurant','school','shelter','swimming_pool','taxi','telephone',
-			'theatre','toilets','townhall','university','veterinary','waste_basket')
+			'theatre','toilets','townhall','town_hall','university','veterinary','waste_basket')
 		OR aerialway IN ('station')
 		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class) AS without_rank;
 $$

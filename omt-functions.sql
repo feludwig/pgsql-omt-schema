@@ -1,22 +1,33 @@
 
--- transportation and transportation_name layer types.
--- will be separated in the two layers
-DROP TYPE row_omt_aerodrome_label CASCADE;
-DROP TYPE row_omt_aeroway CASCADE;
-DROP TYPE row_omt_boundary CASCADE;
-DROP TYPE row_omt_building CASCADE;
-DROP TYPE row_omt_housenumber CASCADE;
-DROP TYPE row_omt_landcover CASCADE;
-DROP TYPE row_omt_landuse CASCADE;
-DROP TYPE row_omt_mountain_peak CASCADE;
-DROP TYPE row_omt_park CASCADE;
-DROP TYPE row_omt_place CASCADE;
-DROP TYPE row_omt_poi CASCADE;
-DROP TYPE row_omt_waterway CASCADE;
+-- TODO: 
+--  move all column names to templated column names for tags lookup and possibly column different
+--    semantics -> "highway" becomes {{ line.highway }}
+
+--  move all table names to templated table names
+
+-- add template prefix for function names, default {{ 'omt' }} || '_transportation'
+-- add templ prefix for typenames, default {{ 'row_omt' }} || '_named_transportation'
+-- add templ "all" function name {{ 'omt_all' }}
+
+-- add template {{ additional_name_columns }} == 'name AS "name:latin",' eg for osm_bright
+--    or could also be 'name AS name_en'
+
+DROP TYPE IF EXISTS row_omt_aerodrome_label CASCADE;
+DROP TYPE IF EXISTS row_omt_aeroway CASCADE;
+DROP TYPE IF EXISTS row_omt_boundary CASCADE;
+DROP TYPE IF EXISTS row_omt_building CASCADE;
+DROP TYPE IF EXISTS row_omt_housenumber CASCADE;
+DROP TYPE IF EXISTS row_omt_landcover CASCADE;
+DROP TYPE IF EXISTS row_omt_landuse CASCADE;
+DROP TYPE IF EXISTS row_omt_mountain_peak CASCADE;
+DROP TYPE IF EXISTS row_omt_park CASCADE;
+DROP TYPE IF EXISTS row_omt_place CASCADE;
+DROP TYPE IF EXISTS row_omt_poi CASCADE;
+DROP TYPE IF EXISTS row_omt_waterway CASCADE;
 
 -- united types to make {layer} and {layer}_name
-DROP TYPE row_omt_named_transportation CASCADE;
-DROP TYPE row_omt_named_water CASCADE;
+DROP TYPE IF EXISTS row_omt_named_transportation CASCADE;
+DROP TYPE IF EXISTS row_omt_named_water CASCADE;
 
 -- BEWARE! the order of these columns is important.
 -- if you exchange two differently-typed columns, postgresql will not be happy,
@@ -24,6 +35,7 @@ DROP TYPE row_omt_named_water CASCADE;
 -- happily resturn you the wrong results...
 
 CREATE TYPE row_omt_named_transportation AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   name text,
   ref text,
   class text,
@@ -129,6 +141,7 @@ CREATE TYPE row_omt_place AS (
 );
 
 CREATE TYPE row_omt_poi AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   name text,
   -- TODO: name_en ?
   class text,
@@ -311,11 +324,11 @@ SELECT admin_level::integer AS admin_level,
     COALESCE(tags->'ISO3166-1:alpha2',tags->'ISO3166-1',tags->'country_code_fips')
     ELSE NULL END) AS claimed_by,
   (CASE boundary WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_line
-WHERE (boundary IN ('administrative') OR CASE
-    WHEN z<=4 THEN boundary IN ('maritime')
-      AND admin_level IN ('1','2') ELSE false
+  ST_AsMVTGeom({{line.way}},bounds_geom) AS geom
+FROM {{line.table_name}}
+WHERE ({{line.boundary}} IN ('administrative') OR CASE
+    WHEN z<=4 THEN {{line.boundary}} IN ('maritime')
+      AND {{line.admin_level}} IN ('1','2') ELSE false
     END)
    AND (z>=11 OR admin_level IN ('1','2','3','4','5','6','7'))
    AND (z>=8 OR admin_level IN ('1','2','3','4'))
@@ -348,6 +361,9 @@ CREATE OR REPLACE FUNCTION public.line_omt_transportation(bounds_geom geometry,z
 RETURNS setof row_omt_named_transportation
 AS $$
 SELECT
+{% if with_osm_id %}
+  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
   name,
   ref,
 -- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
@@ -431,29 +447,29 @@ SELECT
   -- DO THE ZOOM modulation!
   -- https://github.com/openmaptiles/openmaptiles/blob/master/layers/transportation/transportation.sql
   -- also CHECK tracktypes! in style they look like asphalt roads
-  NULLIF(bicycle,'') AS bicycle,
-  NULLIF(foot,'') AS foot,
-  NULLIF(horse,'') AS horse,
-  NULLIF(tags->'mtb:scale','') AS mtb_scale,
-  (CASE WHEN surface IN ('paved','asphalt','cobblestone','concrete',
+  NULLIF({{line.bicycle}},'') AS bicycle,
+  NULLIF({{line.foot}},'') AS foot,
+  NULLIF({{line.horse}},'') AS horse,
+  NULLIF({{line.mtb_scale}},'') AS mtb_scale,
+  (CASE WHEN {{line.surface}} IN ('paved','asphalt','cobblestone','concrete',
       'concrete:lanes','concrete:plates','metal','paving_stones','sett',
       'unhewn_cobblestone','wood') THEN 'paved'
     WHEN surface IN ('unpaved','compacted','dirt','earth','fine_gravel',
       'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
       'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
   END) AS surface,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom({{line.way}},bounds_geom) AS geom
 FROM planet_osm_line
 WHERE (
-  railway IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
+  {{line.railway}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
     'monorail','tram')
-  OR highway IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
+  OR {{line.highway}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
     'pedestrian','bridleway','corridor','service','track','raceway','busway',
     'bus_guideway','construction')
-  OR (highway IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
-  OR (highway IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
-  OR (highway IN ('tertiary','tertiary_link','road') AND z>=11)
-  OR (highway IN ('secondary','secondary_link') AND z>=9)
+  OR ({{line.highway}} IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
+  OR ({{line.highway}} IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
+  OR ({{line.highway}} IN ('tertiary','tertiary_link','road') AND z>=11)
+  OR ({{line.highway}} IN ('secondary','secondary_link') AND z>=9)
   OR aerialway IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
     'j-bar','mixed_lift')
   OR route IN ('bicycle') --NOTE:extension
@@ -563,11 +579,14 @@ RETURNS setof row_omt_poi
 AS $$
   -- TODO: weiningen the farm does not show. also check maplibre-basic, osm-bright
   --    and osm-liberty styles
-SELECT name,class,subclass,
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  name,class,subclass,
   (row_number() OVER (ORDER BY (CASE
     WHEN name='' THEN 2000 ELSE get_poi_class_rank(class)END) ASC)/5)::int AS rank,
   agg_stop,level,layer,indoor,geom FROM
 (SELECT name,
+{% if with_osm_id %} osm_id, {% endif %}
 	(CASE WHEN
 		subclass IN ('accessories','antiques','beauty','bed','boutique','camera',
 			'carpet','charity','chemist','coffee','computer','convenience','copyshop',
@@ -618,6 +637,7 @@ SELECT name,class,subclass,
 	END) AS class,
 	subclass,agg_stop,level,layer,indoor,geom
 	FROM (SELECT name,
+{% if with_osm_id %} osm_id, {% endif %}
 		(CASE WHEN
 		waterway IN ('dock')
 			THEN waterway
@@ -697,10 +717,14 @@ SELECT name,class,subclass,
       ,bounds_geom) AS geom
 	FROM (
     SELECT name,waterway,building,shop,highway,leisure,historic,
+{% if with_osm_id %} 'n'||osm_id AS osm_id, {% endif %}
       railway,sport,office,tourism,landuse,barrier,amenity,
       aerialway,tags,layer,way,'point' AS tablefrom FROM planet_osm_point
     UNION ALL
     SELECT name,waterway,building,shop,highway,leisure,historic,
+{% if with_osm_id %}
+  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
       railway,sport,office,tourism,landuse,barrier,amenity,
       aerialway,tags,layer,way,'polygon' AS tablefrom FROM planet_osm_polygon) AS layer_poi
 	WHERE (
@@ -842,6 +866,7 @@ BEGIN
       ),
       premvt_transportation_noname AS (
         SELECT
+          {% if with_osm_id %} osm_id, {% endif %}
           network,class,subclass,brunnel,oneway,ramp,service,
           access,toll,expressway,cycleway,level,layer,indoor,bicycle,
           foot,horse,mtb_scale,surface,
@@ -850,6 +875,7 @@ BEGIN
       ),
       premvt_transportation_name AS (
         SELECT
+          {% if with_osm_id %} osm_id, {% endif %}
           name,name AS "name:latin",ref,length(ref) AS ref_length,
           network,class,subclass,brunnel,level,layer,indoor,
           geom

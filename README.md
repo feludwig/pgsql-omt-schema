@@ -20,18 +20,20 @@ A little selection of styles
 
 # Requirements
 
+* `python3`
+  - `pip install psycopg2` for autodetecting tables and their columns in database
+  - `pip install jinja2` for templating support, autodetected column names and types
+
 * `osm2pgsql` was run with `--hstore` containing all missing tags. For now, a mix
 of database columns and `tags->'colname'` accesses happen.
 Maybe this can all be summarized in a `.style` file for osm2pgsql; but applying it
 would require a reimport.
 
-* Tables `planet_osm_point`, `planet_osm_line` and `planet_osm_polygon` exist,
-are in the `public` schema and you have `SELECT` permissions.
-Their geometry column is called `way`.
-
-
-Also, lots of columns must exist and the script will just error out if they do
-not exist. Usually `tags->'column_name'` will contain the data
+* Tables `*_point`, `*_line` and `*_polygon` exist,
+ and you have `SELECT` permissions. The tables are found by their suffix,
+the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
+Their geometry column is called `way`
+(**planned**: just read `geometry_columns` table for the `way` column).
 
 
 **Planned**: generating indexes for all of these queries to make them faster,
@@ -114,23 +116,20 @@ unconditionally (this is temporary).
 
 ### Create the SQL functions
 
-`psql -d gis -f pgsql-omt-schema/omt-functions.sql`
+`python3 run.py 'dbname=gis port=5432 user=user'`
+
+this will output some `NOTICE`s...
 
 
-this should output a lot of `CREATE FUNCTION`s.
-
-
-If your database schema is unexpected, an error will show up.
 At the end, a `length` with nonzero length should be generated if you have Switzerland
-maps data for Weiningen (hardcoded z/x/y of 16,34303,22938).
-This should also not produce an error.
+maps data at Weiningen (hardcoded `z/x/y` of `16/34303/22938`), else just a length of 0.
 
 
 If everything worked, you can:
 * install
 [pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
 and give it the database connection configuration.
-* Visit the pg\_tileserv url root, and you should see `omt_all` under the 
+* Visit the `pg_tileserv` url root, and you should see `omt_all` under the
 _Function Layers_ section.
 
 ### Add tile url

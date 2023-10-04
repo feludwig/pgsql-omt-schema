@@ -616,7 +616,10 @@ AS $$
 BEGIN RETURN QUERY
   -- TODO: weiningen the farm does not show. also check maplibre-basic, osm-bright
   --    and osm-liberty styles
-SELECT name,class,subclass,get_poi_class_rank(class) AS rank,agg_stop,level,layer,indoor,geom FROM
+SELECT name,class,subclass,
+  (row_number() OVER (ORDER BY (CASE
+    WHEN name='' THEN 2000 ELSE get_poi_class_rank(class)END) ASC)/5)::int AS rank,
+  agg_stop,level,layer,indoor,geom FROM
 (SELECT name,
 	(CASE WHEN
 		subclass IN ('accessories','antiques','beauty','bed','boutique','camera',
@@ -740,8 +743,18 @@ SELECT name,class,subclass,get_poi_class_rank(class) AS rank,agg_stop,level,laye
 		0 AS agg_stop, -- TODO: not implemented
 		tags->'level' AS level,layer,
 		(CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
-		ST_AsMVTGeom(way,bounds_geom) AS geom
-	FROM planet_osm_point
+		ST_AsMVTGeom(
+      (CASE WHEN tablefrom = 'point' THEN way
+      WHEN tablefrom='polygon' THEN ST_Centroid(way) END)
+      ,bounds_geom) AS geom
+	FROM (
+    SELECT name,waterway,building,shop,highway,leisure,historic,
+      railway,sport,office,tourism,landuse,barrier,amenity,
+      aerialway,tags,layer,way,'point' AS tablefrom FROM planet_osm_point
+    UNION ALL
+    SELECT name,waterway,building,shop,highway,leisure,historic,
+      railway,sport,office,tourism,landuse,barrier,amenity,
+      aerialway,tags,layer,way,'polygon' AS tablefrom FROM planet_osm_polygon) AS layer_poi
 	WHERE (
 		waterway IN ('dock')
 		OR building IN ('dormitory')
@@ -797,137 +810,6 @@ SELECT name,class,subclass,get_poi_class_rank(class) AS rank,agg_stop,level,laye
 			'recycling','restaurant','school','shelter','swimming_pool','taxi','telephone',
 			'theatre','toilets','townhall','university','veterinary','waste_basket')
 		OR aerialway IN ('station')
-		) AND ST_Intersects(way,bounds_geom)
-	UNION ALL
-	SELECT name,
-		(CASE WHEN
-		waterway IN ('dock')
-			THEN waterway
-		WHEN building IN ('dormitory')
-			THEN building
-		WHEN shop IN ('accessories','alcohol','antiques','art','bag','bakery','beauty',
-			'bed','beverages','bicycle','books','boutique','butcher','camera','car',
-			'car_repair','car_parts','carpet','charity','chemist','chocolate',
-			'clothes','coffee','computer','confectionery','convenience','copyshop',
-			'cosmetics','deli','delicatessen','department_store','doityourself',
-			'dry_cleaning','electronics','erotic','fabric','florist','frozen_food',
-			'furniture','garden_centre','general','gift','greengrocer','hairdresser',
-			'hardware','hearing_aids','hifi','ice_cream','interior_decoration',
-			'jewelry','kiosk','lamps','laundry','locksmith','mall','massage',
-			'mobile_phone','motorcycle','music','musical_instrument','newsagent',
-			'optician','outdoor','paint','perfume','perfumery','pet','photo',
-			'second_hand','shoes','sports','stationery','supermarket','tailor',
-			'tattoo','ticket','tobacco','toys','travel_agency','video','video_games',
-			'watches','weapons','wholesale','wine')
-			THEN shop
-		WHEN highway IN ('bus_stop') THEN highway
-		WHEN leisure IN ('dog_park','escape_game','garden','golf_course','ice_rink',
-			'hackerspace','marina','miniature_golf','park','pitch','playground',
-			'sports_centre','stadium','swimming_area','swimming_pool','water_park')
-			THEN leisure
-		WHEN historic IN ('monument','castle','ruins') THEN historic
-		WHEN railway IN ('halt','station','subway_entrance','train_station_entrance',
-			'tram_stop') THEN railway
-		WHEN sport IN ('american_football','archery','athletics','australian_football',
-			'badminton','baseball','basketball','beachvolleyball','billiards','bmx',
-			'boules','bowls','boxing','canadian_football','canoe','chess','climbing',
-			'climbing_adventure','cricket','cricket_nets','croquet','curling','cycling',
-			'disc_golf','diving','dog_racing','equestrian','fatsal','field_hockey',
-			'free_flying','gaelic_games','golf','gymnastics','handball','hockey',
-			'horse_racing','horseshoes','ice_hockey','ice_stock','judo','karting',
-			'korfball','long_jump','model_aerodrome','motocross','motor','multi',
-			'netball','orienteering','paddle_tennis','paintball','paragliding','pelota',
-			'racquet','rc_car','rowing','rugby','rugby_league','rugby_union','running',
-			'sailing','scuba_diving','shooting','shooting_range','skateboard','skating',
-			'skiing','soccer','surfing','swimming','table_soccer','table_tennis',
-			'team_handball','tennis','toboggan','volleyball','water_ski','yoga')
-			THEN sport
-		WHEN office IN ('diplomatic') THEN office
-		WHEN landuse IN ('basin','brownfield','cemetery','reservoir','winter_sports')
-			THEN landuse
-		WHEN tourism IN ('alpine_hut','aquarium','artwork','attraction',
-			'bed_and_breakfast','camp_site','caravan_site','chalet','gallery',
-			'guest_house','hostel','hotel','information','motel','museum','picnic_site',
-			'theme_park','viewpoint','zoo')
-			THEN tourism
-		WHEN barrier IN ('bollard','border_control','cycle_barrier','gate','lift_gate',
-			'sally_port','stile','toll_booth')
-			THEN barrier
-		WHEN amenity IN ('arts_centre','atm','bank','bar','bbq','bicycle_parking',
-			'bicycle_rental','biergarten','bus_station','cafe','cinema','clinic','college',
-			'community_centre','courthouse','dentist','doctors','drinking_water','fast_food',
-			'ferry_terminal','fire_station','food_court','fuel','grave_yard','hospital',
-			'ice_cream','kindergarten','library','marketplace','motorcycle_parking',
-			'nightclub','nursing_home','parking','pharmacy','place_of_worship','police',
-			'parcel_locker','post_box','post_office','prison','pub','public_building',
-			'recycling','restaurant','school','shelter','swimming_pool','taxi','telephone',
-			'theatre','toilets','townhall','university','veterinary','waste_basket')
-			THEN amenity
-		WHEN aerialway IN ('station') THEN aerialway
-		END) AS subclass,
-		(CASE WHEN
-			railway IN ('station') THEN 'railway'
-			WHEN aerialway IN ('station') THEN 'aerialway'
-		END) AS subclass_helper_key, -- distinguish railway=station and aerialway=station
-		0 AS agg_stop, -- TODO: not implemented
-		tags->'level' AS level,layer,
-		(CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
-		ST_AsMVTGeom(ST_Centroid(way),bounds_geom) AS geom
-	FROM planet_osm_polygon
-	WHERE (
-		waterway IN ('dock') OR building IN ('dormitory')
-		OR leisure IN ('dog_park','escape_game','garden','golf_course','ice_rink',
-			'hackerspace','marina','miniature_golf','park','pitch','playground',
-			'sports_centre','stadium','swimming_area','swimming_pool','water_park')
-		OR historic IN ('monument','castle','ruins')
-		OR railway IN ('halt','station','subway_entrance','train_station_entrance',
-			'tram_stop')
-		OR sport IN ('american_football','archery','athletics','australian_football',
-			'badminton','baseball','basketball','beachvolleyball','billiards','bmx',
-			'boules','bowls','boxing','canadian_football','canoe','chess','climbing',
-			'climbing_adventure','cricket','cricket_nets','croquet','curling','cycling',
-			'disc_golf','diving','dog_racing','equestrian','fatsal','field_hockey',
-			'free_flying','gaelic_games','golf','gymnastics','handball','hockey',
-			'horse_racing','horseshoes','ice_hockey','ice_stock','judo','karting',
-			'korfball','long_jump','model_aerodrome','motocross','motor','multi',
-			'netball','orienteering','paddle_tennis','paintball','paragliding','pelota',
-			'racquet','rc_car','rowing','rugby','rugby_league','rugby_union','running',
-			'sailing','scuba_diving','shooting','shooting_range','skateboard','skating',
-			'skiing','soccer','surfing','swimming','table_soccer','table_tennis',
-			'team_handball','tennis','toboggan','volleyball','water_ski','yoga')
-		OR office IN ('diplomatic')
-		OR landuse IN ('basin','brownfield','cemetery','reservoir','winter_sports')
-		OR tourism IN ('alpine_hut','aquarium','artwork','attraction',
-			'bed_and_breakfast','camp_site','caravan_site','chalet','gallery',
-			'guest_house','hostel','hotel','information','motel','museum','picnic_site',
-			'theme_park','viewpoint','zoo')
-		OR barrier IN ('bollard','border_control','cycle_barrier','gate','lift_gate',
-			'sally_port','stile','toll_booth')
-		OR amenity IN ('arts_centre','atm','bank','bar','bbq','bicycle_parking',
-			'bicycle_rental','biergarten','bus_station','cafe','cinema','clinic','college',
-			'community_centre','courthouse','dentist','doctors','drinking_water','fast_food',
-			'ferry_terminal','fire_station','food_court','fuel','grave_yard','hospital',
-			'ice_cream','kindergarten','library','marketplace','motorcycle_parking',
-			'nightclub','nursing_home','parking','pharmacy','place_of_worship','police',
-			'parcel_locker','post_box','post_office','prison','pub','public_building',
-			'recycling','restaurant','school','shelter','swimming_pool','taxi','telephone',
-			'theatre','toilets','townhall','university','veterinary','waste_basket')
-		OR aerialway IN ('station')
-		OR highway IN ('bus_stop')
-		OR shop IN ('accessories','alcohol','antiques','art','bag','bakery','beauty',
-			'bed','beverages','bicycle','books','boutique','butcher','camera','car',
-			'car_repair','car_parts','carpet','charity','chemist','chocolate',
-			'clothes','coffee','computer','confectionery','convenience','copyshop',
-			'cosmetics','deli','delicatessen','department_store','doityourself',
-			'dry_cleaning','electronics','erotic','fabric','florist','frozen_food',
-			'furniture','garden_centre','general','gift','greengrocer','hairdresser',
-			'hardware','hearing_aids','hifi','ice_cream','interior_decoration',
-			'jewelry','kiosk','lamps','laundry','locksmith','mall','massage',
-			'mobile_phone','motorcycle','music','musical_instrument','newsagent',
-			'optician','outdoor','paint','perfume','perfumery','pet','photo',
-			'second_hand','shoes','sports','stationery','supermarket','tailor',
-			'tattoo','ticket','tobacco','toys','travel_agency','video','video_games',
-			'watches','weapons','wholesale','wine')
 		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class) AS without_rank;
 END;
 $$

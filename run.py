@@ -19,18 +19,22 @@ class TypeHandler() :
         for (oid,typname,typcategory) in c.fetchall() :
             self.types[oid]=(typname,typcategory)
     def is_similar_type(self,a,b) :
-        if isinstance(a,int) :
-            a_typ=self.types[a]
-        else :
-            a_typ=[i for i in self.types.values() if i[0]==a][0]
-        if isinstance(b,int) :
-            b_typ=self.types[b]
-        else :
-            b_typ=[i for i in self.types.values() if i[0]==b][0]
-        if a_typ[0]==b_typ[0] :
-            return True
-        if a_typ[1]==b_typ[1] :
-            return True
+        try :
+            if isinstance(a,int) :
+                a_typ=self.types[a]
+            else :
+                a_typ=[i for i in self.types.values() if i[0]==a][0]
+            if isinstance(b,int) :
+                b_typ=self.types[b]
+            else :
+                b_typ=[i for i in self.types.values() if i[0]==b][0]
+            if a_typ[0]==b_typ[0] :
+                return True
+            if a_typ[1]==b_typ[1] :
+                return True
+        except IndexError :
+            print(a,b,'types uncomparable')
+            exit(1)
         return False
 
 
@@ -106,6 +110,8 @@ aliases={
     'line':{
         'mtb_scale':'mtb:scale',
     },
+    'polygon':{
+    },
 }
 
 need_columns={
@@ -128,6 +134,7 @@ need_columns={
         Column('way','geometry'),
         Column('tags','hstore'),
         Column('z_order','int4'),
+        Column('osm_id','int8'),
     ),
     'line':(
         Column('amenity','text'),
@@ -140,9 +147,16 @@ need_columns={
         Column('admin_level','text'),
         Column('highway','text'),
         Column('railway','text'),
+        Column('intermittent','text'),
 
         Column('way','geometry'),
         Column('tags','hstore'),
+    ),
+    'polygon':(
+        Column('boundary','text'),
+
+        Column('tags','hstore'),
+        Column('osm_id','int8'),
     ),
 }
 
@@ -157,7 +171,18 @@ if __name__=='__main__' :
     e.globals=make_global_dict(c,need_columns,aliases)
     t=e.get_template('omt-functions.sql')
     sql_script=t.render(**{
-        'with_osm_id':True
+        'with_osm_id':True,
+        # WARNING: set to '' to ignore. else NEEDS to have a trailing comma
+        # this is only added at the end, after the typedefed-rows have been
+        #   generated. tags are not available anymore
+        'additional_name_columns':'name AS "name:latin",',
+        # NO SPACES!
+        'omt_typ_pref':'row_omt',
+        # all functions except omt_all_func will have this prefix
+        'omt_func_pref':'public.omt',
+        # DOES NOT use the omt_func_pref
+        'omt_all_func':'public.omt_all',
+        'debug':True,
     })
     if len(sys.argv)>2 and sys.argv[2]=='--print' :
         print(sql_script)

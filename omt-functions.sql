@@ -5,36 +5,37 @@
 
 --  move all table names to templated table names
 
--- add template prefix for function names, default {{ 'omt' }} || '_transportation'
--- add templ prefix for typenames, default {{ 'row_omt' }} || '_named_transportation'
--- add templ "all" function name {{ 'omt_all' }}
+-- add template prefix for function names, default [ omt_func_pref='omt' ]_transportation
+-- add templ prefix for typenames, default [ omt_typ_pref='row_omt' ]_named_transportation
+-- add templ "all" function name [ omt_all_func='omt_all' ]
 
--- add template {{ additional_name_columns }} == 'name AS "name:latin",' eg for osm_bright
---    or could also be 'name AS name_en'
+-- the template {{ additional_name_columns }} == 'name AS "name:latin",' eg for osm_bright
+--    or could also be 'name AS name_en'.
+--    set additional_name_columns='' to not have any effect
 
-DROP TYPE IF EXISTS row_omt_aerodrome_label CASCADE;
-DROP TYPE IF EXISTS row_omt_aeroway CASCADE;
-DROP TYPE IF EXISTS row_omt_boundary CASCADE;
-DROP TYPE IF EXISTS row_omt_building CASCADE;
-DROP TYPE IF EXISTS row_omt_housenumber CASCADE;
-DROP TYPE IF EXISTS row_omt_landcover CASCADE;
-DROP TYPE IF EXISTS row_omt_landuse CASCADE;
-DROP TYPE IF EXISTS row_omt_mountain_peak CASCADE;
-DROP TYPE IF EXISTS row_omt_park CASCADE;
-DROP TYPE IF EXISTS row_omt_place CASCADE;
-DROP TYPE IF EXISTS row_omt_poi CASCADE;
-DROP TYPE IF EXISTS row_omt_waterway CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_aerodrome_label CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_aeroway CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_boundary CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_building CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_housenumber CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_landcover CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_landuse CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_mountain_peak CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_park CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_place CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_poi CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_waterway CASCADE;
 
 -- united types to make {layer} and {layer}_name
-DROP TYPE IF EXISTS row_omt_named_transportation CASCADE;
-DROP TYPE IF EXISTS row_omt_named_water CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_named_transportation CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_named_water CASCADE;
 
 -- BEWARE! the order of these columns is important.
 -- if you exchange two differently-typed columns, postgresql will not be happy,
 -- but the danger is when you exchange two same-type columns: postgresql will
 -- happily resturn you the wrong results...
 
-CREATE TYPE row_omt_named_transportation AS (
+CREATE TYPE {{omt_typ_pref}}_named_transportation AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
   ref text,
@@ -60,7 +61,7 @@ CREATE TYPE row_omt_named_transportation AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_aerodrome_label AS (
+CREATE TYPE {{omt_typ_pref}}_aerodrome_label AS (
   name text,
   --TODO: name_en ?
   class text,
@@ -71,13 +72,13 @@ CREATE TYPE row_omt_aerodrome_label AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_aeroway AS (
+CREATE TYPE {{omt_typ_pref}}_aeroway AS (
   ref text,
   class text,
   geom geometry
 );
 
-CREATE TYPE row_omt_boundary AS (
+CREATE TYPE {{omt_typ_pref}}_boundary AS (
   admin_level integer,
   adm0_l text,
   adm0_r text,
@@ -88,7 +89,7 @@ CREATE TYPE row_omt_boundary AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_building AS (
+CREATE TYPE {{omt_typ_pref}}_building AS (
   render_height real,
   render_min_height real,
   colour text, -- in format '#rrggbb'
@@ -96,23 +97,23 @@ CREATE TYPE row_omt_building AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_housenumber AS (
+CREATE TYPE {{omt_typ_pref}}_housenumber AS (
   housenumber text,
   geom geometry
 );
 
-CREATE TYPE row_omt_landcover AS (
+CREATE TYPE {{omt_typ_pref}}_landcover AS (
   class text,
   subclass text,
   geom geometry
 );
 
-CREATE TYPE row_omt_landuse AS (
+CREATE TYPE {{omt_typ_pref}}_landuse AS (
   class text,
   geom geometry
 );
 
-CREATE TYPE row_omt_mountain_peak AS (
+CREATE TYPE {{omt_typ_pref}}_mountain_peak AS (
   name text,
   -- TODO: name_en, name_de ?
   class text,
@@ -122,7 +123,7 @@ CREATE TYPE row_omt_mountain_peak AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_park AS (
+CREATE TYPE {{omt_typ_pref}}_park AS (
   name text,
   --TODO: name_en ?
   class text,
@@ -130,7 +131,9 @@ CREATE TYPE row_omt_park AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_place AS (
+CREATE TYPE {{omt_typ_pref}}_place AS (
+{% if with_osm_id %} osm_id text, {% endif %}
+{% if debug %} way_area real, {% endif %}
   name text,
   --TODO: name_en ?
   capital integer,
@@ -140,7 +143,7 @@ CREATE TYPE row_omt_place AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_poi AS (
+CREATE TYPE {{omt_typ_pref}}_poi AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
   -- TODO: name_en ?
@@ -148,13 +151,13 @@ CREATE TYPE row_omt_poi AS (
   subclass text,
   rank integer,
   agg_stop integer,
-  level text,
+  level int,
   layer int,
   indoor int,
   geom geometry
 );
 
-CREATE TYPE row_omt_named_water AS (
+CREATE TYPE {{omt_typ_pref}}_named_water AS (
   name text,
   --TODO: name_en ?
   id bigint,
@@ -164,7 +167,7 @@ CREATE TYPE row_omt_named_water AS (
   geom geometry
 );
 
-CREATE TYPE row_omt_waterway AS (
+CREATE TYPE {{omt_typ_pref}}_waterway AS (
   name text,
   --TODO: name_en ?
   class text,
@@ -193,9 +196,61 @@ SELECT CASE
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
+CREATE OR REPLACE FUNCTION get_rank_by_area(area real) RETURNS int
+AS $$
+SELECT CASE WHEN v.val<1 THEN 1 ELSE v.val END
+  FROM (SELECT -1*log(20.0,area::numeric)::int+10 AS val) AS v;
+$$
+LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION public.omt_landuse(bounds_geom geometry,z integer)
-RETURNS setof row_omt_landuse
+CREATE OR REPLACE FUNCTION adjust_rank_by_class(class text) RETURNS int
+AS $$
+SELECT CASE 
+  WHEN class IN ('continent','country','state') THEN -2
+  WHEN class IN ('province','city') THEN -1
+  WHEN class IN ('village') THEN +1
+  WHEN class IN ('hamlet','subrb','quarter','neighbourhood') THEN +2
+  WHEN class IN ('isolated_dwelling') THEN +3
+    -- island, town
+  ELSE 0
+END;
+$$
+LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION get_point_admin_parent_area(node_id bigint) RETURNS real
+AS $$
+  SELECT way_area FROM (SELECT id
+    FROM planet_osm_rels WHERE planet_osm_member_ids(members,'N'::char(1)) && ARRAY[node_id]::bigint[]
+    AND (members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_centre"}]')::jsonb
+      OR members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_center"}]')::jsonb)
+  ) AS parents
+  JOIN planet_osm_polygon ON -parents.id=osm_id ORDER BY(way_area) DESC LIMIT 1;
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION get_point_admin_enclosing_rank(node_id bigint) RETURNS int
+  -- a neighbourhood is not the admin_centre of anything. instead take its enclosing lowest
+  -- admin level. add 1 to the rank to signify smaller than the administrative boundary
+  -- BUT if the name is the same for that admin level, take ist rank (+0)
+AS $$
+WITH enclosing_area AS (
+  SELECT way_area,(SELECT {{point.name}} FROM {{point.table_name}}
+      WHERE {{point.osm_id}}=node_id)=name AS samename
+    FROM {{polygon.table_name}} WHERE {{polygon.boundary}}='administrative'
+      AND ST_Intersects(way,(SELECT {{point.way}} FROM {{point.table_name}}
+          WHERE {{point.osm_id}}=node_id))
+    ORDER BY(admin_level) DESC LIMIT 1)
+  SELECT CASE WHEN enclosing_area.samename=true THEN get_rank_by_area(way_area)
+    ELSE
+      get_rank_by_area(way_area)+1
+    END FROM enclosing_area;
+$$
+
+LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landuse(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_landuse
 AS $$
 SELECT
   (CASE
@@ -224,8 +279,8 @@ WHERE (landuse IN ('railway','cemetery','miltary','quarry','residential','commer
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION public.omt_aeroway(bounds_geom geometry)
-RETURNS setof row_omt_aeroway
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aeroway(bounds_geom geometry)
+RETURNS setof {{omt_typ_pref}}_aeroway
 AS $$
 SELECT ref,aeroway AS class,
   ST_AsMVTGeom(way,bounds_geom) AS geom
@@ -235,8 +290,8 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION public.omt_landcover(bounds_geom geometry,z integer)
-RETURNS setof row_omt_landcover
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landcover(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_landcover
 AS $$
 SELECT 
   ( CASE -- resolve the class from the subclass
@@ -279,8 +334,8 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 
-CREATE OR REPLACE FUNCTION public.omt_building(bounds_geom geometry,z integer)
-RETURNS setof row_omt_building
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_building(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_building
 AS $$
 SELECT text_to_real_0(tags->'height') AS render_height,
   COALESCE(text_to_real_0(tags->'min_height'),
@@ -297,8 +352,8 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION public.omt_park(bounds_geom geometry)
-RETURNS setof row_omt_park
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_park(bounds_geom geometry)
+RETURNS setof {{omt_typ_pref}}_park
 AS $$
 SELECT name,
   (CASE
@@ -314,8 +369,8 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION public.omt_boundary(bounds_geom geometry, z integer)
-RETURNS setof row_omt_boundary
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_boundary(bounds_geom geometry, z integer)
+RETURNS setof {{omt_typ_pref}}_boundary
 AS $$
 SELECT admin_level::integer AS admin_level,
   tags->'left:country' AS adm0_l,tags->'right:country' AS adm0_r,
@@ -337,15 +392,15 @@ WHERE ({{line.boundary}} IN ('administrative') OR CASE
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION public.omt_housenumber(bounds_geom geometry)
-RETURNS setof row_omt_housenumber
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_housenumber(bounds_geom geometry)
+RETURNS setof {{omt_typ_pref}}_housenumber
 AS $$
 SELECT "addr:housenumber" AS housenumber,
   ST_AsMVTGeom((CASE
       WHEN tablefrom = 'point' THEN way
       ELSE ST_Centroid(way) END),bounds_geom) AS geom
 FROM (
-  SELECT "addr:housenumber",way,'line' AS tablefrom FROM planet_osm_line
+  SELECT "addr:housenumber",way,'line' AS tablefrom FROM {{line.table_name}}
   UNION ALL
   SELECT "addr:housenumber",way,'point' AS tablefrom FROM planet_osm_point
   UNION ALL
@@ -357,143 +412,135 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION public.line_omt_transportation(bounds_geom geometry,z integer)
-RETURNS setof row_omt_named_transportation
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_named_transportation
 AS $$
-SELECT
-{% if with_osm_id %}
-  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
-{% endif %}
-  name,
-  ref,
--- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
-  (CASE
-    WHEN highway = 'construction' THEN (CASE
-        WHEN construction IN ('motorway','motorway_link') THEN 'motorway_construction'
-        WHEN construction IN ('primary','primary_link') THEN 'primary_construction'
-        WHEN construction IN ('secondary','secondary_link') THEN 'secondary_construction'
-        WHEN construction IN ('tertiary','tertiary_link') THEN 'tertiary_construction'
-        WHEN construction IN ('minor','minor_link','OTHERS') THEN 'minor_construction'
-        ELSE 'minor_construction' -- like this ?
-      END)
-    WHEN highway IN ('motorway','trunk','primary','secondary','tertiary',
-      'service','track','raceway') THEN highway||(CASE WHEN construction IS NOT NULL
-      AND construction !='no' THEN '_construction' ELSE '' END)
-    WHEN highway IN ('unclassified','residential','living_street') THEN 'minor'||(
-      CASE WHEN construction IS NOT NULL
-      AND construction !='no' THEN '_construction' ELSE '' END)
-    WHEN highway IN ('road') THEN 'unknown'
-    WHEN highway IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
-      THEN substr(highway,-5)
-    WHEN route IN ('bicycle') OR highway IN ('cycleway') THEN 'bicycle_route' --NOTE:extension
-    --WHEN highway IN ('cycleway') THEN 'bicycle_route' -- NOTE:extension, MOVE cycleway->path here
-    WHEN highway IN ('path','pedestrian','footway','steps') THEN 'path'||(
-      CASE WHEN construction IS NOT NULL
-      AND construction !='no' THEN '_construction' ELSE '' END)
-    WHEN railway IN ('rail','narrow_gauge','preserved','funicular') THEN 'rail'
-    WHEN railway IN ('subway','light_rail','monorail','tram') THEN 'transit'
-    WHEN aerialway <> '' THEN 'aerialway'
-    WHEN tags->'shipway' <> '' THEN tags->'shipway'
-    WHEN man_made <> '' THEN man_made
-  END) AS class, 
-  (CASE
-    WHEN railway IS NOT NULL THEN railway
-    WHEN (highway IS NOT NULL OR public_transport IS NOT NULL)
-        AND highway IN ('path','pedestrian','footway','cycleway','steps')
-      THEN COALESCE(NULLIF(public_transport,''),highway)
-    WHEN aerialway IS NOT NULL THEN aerialway
-  END) AS subclass,
-  (CASE WHEN route IN ('bicycle') THEN
-    (CASE tags->'network' WHEN 'icn' THEN 'international'
-      WHEN 'ncn' THEN 'national'
-      WHEN 'rcn' THEN 'regional'
-      WHEN 'lcn' THEN 'local'
-    END) --NOTE:extension
-    ELSE NULLIF(tags->'network','') END) AS network,
-  (CASE
-    WHEN bridge IS NOT NULL AND bridge!='no' THEN 'bridge'
-    WHEN tunnel IS NOT NULL AND tunnel!='no' THEN 'tunnel'
-    WHEN tags->'ford' IS NOT NULL AND (tags->'ford')!='no' THEN 'ford'
-  END) AS brunnel,
-  (CASE
-    WHEN oneway IN ('no') THEN 0
-    WHEN oneway IN ('-1') THEN -1
-    WHEN oneway IS NOT NULL THEN 1
-    ELSE NULL
-  END) AS oneway,
-  (CASE
-    WHEN tags->'ramp' IN ('no','separate') THEN 0
-    WHEN tags->'ramp' IN ('yes') THEN 1
-    ELSE NULL
-  END) AS ramp,
-  NULLIF(service,'') AS service,
-  CASE WHEN access IN ('no','private') THEN false ELSE NULL END AS access,
-  (CASE
-    WHEN toll IN ('no') THEN 0
-    WHEN toll IS NOT NULL THEN 1
-    ELSE 0
-  END) AS toll,
-  (CASE
-    WHEN tags->'expressway' IN ('yes') THEN 1
-    ELSE NULL
-  END) AS expressway,
-  (CASE WHEN bicycle IN ('yes','1','designated','permissive') THEN 1
-    WHEN bicycle IN ('no','dismount') THEN 0 ELSE NULL
-    --TODO: why not tags->'cycleway' &+ tags->'cycleway:left' and tags->'cycleway:right' ?
-  END) AS cycleway, --NOTE: extension
-  layer,
-  tags->'level' AS level,
-  (CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
-  -- DO THE ZOOM modulation!
-  -- https://github.com/openmaptiles/openmaptiles/blob/master/layers/transportation/transportation.sql
-  -- also CHECK tracktypes! in style they look like asphalt roads
-  NULLIF({{line.bicycle}},'') AS bicycle,
-  NULLIF({{line.foot}},'') AS foot,
-  NULLIF({{line.horse}},'') AS horse,
-  NULLIF({{line.mtb_scale}},'') AS mtb_scale,
-  (CASE WHEN {{line.surface}} IN ('paved','asphalt','cobblestone','concrete',
-      'concrete:lanes','concrete:plates','metal','paving_stones','sett',
-      'unhewn_cobblestone','wood') THEN 'paved'
-    WHEN surface IN ('unpaved','compacted','dirt','earth','fine_gravel',
-      'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
-      'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
-  END) AS surface,
-  ST_AsMVTGeom({{line.way}},bounds_geom) AS geom
-FROM planet_osm_line
-WHERE (
-  {{line.railway}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
-    'monorail','tram')
-  OR {{line.highway}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
-    'pedestrian','bridleway','corridor','service','track','raceway','busway',
-    'bus_guideway','construction')
-  OR ({{line.highway}} IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
-  OR ({{line.highway}} IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
-  OR ({{line.highway}} IN ('tertiary','tertiary_link','road') AND z>=11)
-  OR ({{line.highway}} IN ('secondary','secondary_link') AND z>=9)
-  OR aerialway IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
-    'j-bar','mixed_lift')
-  OR route IN ('bicycle') --NOTE:extension
-) AND ST_Intersects(way,bounds_geom);
+SELECT * FROM (
+  SELECT
+  {% if with_osm_id %}
+    (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  {% endif %}
+    name,
+    ref,
+  -- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
+    (CASE
+      WHEN highway = 'construction' THEN (CASE
+          WHEN construction IN ('motorway','motorway_link') THEN 'motorway_construction'
+          WHEN construction IN ('primary','primary_link') THEN 'primary_construction'
+          WHEN construction IN ('secondary','secondary_link') THEN 'secondary_construction'
+          WHEN construction IN ('tertiary','tertiary_link') THEN 'tertiary_construction'
+          WHEN construction IN ('minor','minor_link','OTHERS') THEN 'minor_construction'
+          ELSE 'minor_construction' -- like this ?
+        END)
+      WHEN highway IN ('motorway','trunk','primary','secondary','tertiary',
+        'service','track','raceway') THEN highway||(CASE WHEN construction IS NOT NULL
+        AND construction !='no' THEN '_construction' ELSE '' END)
+      WHEN highway IN ('unclassified','residential','living_street') THEN 'minor'||(
+        CASE WHEN construction IS NOT NULL
+        AND construction !='no' THEN '_construction' ELSE '' END)
+      WHEN highway IN ('road') THEN 'unknown'
+      WHEN highway IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
+        THEN substr(highway,-5)
+      WHEN route IN ('bicycle') OR highway IN ('cycleway') THEN 'bicycle_route' --NOTE:extension
+      --WHEN highway IN ('cycleway') THEN 'bicycle_route' -- NOTE:extension, MOVE cycleway->path here
+      WHEN highway IN ('path','pedestrian','footway','steps') THEN 'path'||(
+        CASE WHEN construction IS NOT NULL
+        AND construction !='no' THEN '_construction' ELSE '' END)
+      WHEN railway IN ('rail','narrow_gauge','preserved','funicular') THEN 'rail'
+      WHEN railway IN ('subway','light_rail','monorail','tram') THEN 'transit'
+      WHEN aerialway <> '' THEN 'aerialway'
+      WHEN tags->'shipway' <> '' THEN tags->'shipway'
+      WHEN man_made <> '' THEN man_made
+    END) AS class, 
+    (CASE
+      WHEN railway IS NOT NULL THEN railway
+      WHEN (highway IS NOT NULL OR public_transport IS NOT NULL)
+          AND highway IN ('path','pedestrian','footway','cycleway','steps')
+        THEN COALESCE(NULLIF(public_transport,''),highway)
+      WHEN aerialway IS NOT NULL THEN aerialway
+    END) AS subclass,
+    (CASE WHEN route IN ('bicycle') THEN
+      (CASE tags->'network' WHEN 'icn' THEN 'international'
+        WHEN 'ncn' THEN 'national'
+        WHEN 'rcn' THEN 'regional'
+        WHEN 'lcn' THEN 'local'
+      END) --NOTE:extension
+      ELSE NULLIF(tags->'network','') END) AS network,
+    (CASE
+      WHEN bridge IS NOT NULL AND bridge!='no' THEN 'bridge'
+      WHEN tunnel IS NOT NULL AND tunnel!='no' THEN 'tunnel'
+      WHEN tags->'ford' IS NOT NULL AND (tags->'ford')!='no' THEN 'ford'
+    END) AS brunnel,
+    (CASE
+      WHEN oneway IN ('no') THEN 0
+      WHEN oneway IN ('-1') THEN -1
+      WHEN oneway IS NOT NULL THEN 1
+      ELSE NULL
+    END) AS oneway,
+    (CASE
+      WHEN tags->'ramp' IN ('no','separate') THEN 0
+      WHEN tags->'ramp' IN ('yes') THEN 1
+      ELSE NULL
+    END) AS ramp,
+    NULLIF(service,'') AS service,
+    CASE WHEN access IN ('no','private') THEN false ELSE NULL END AS access,
+    (CASE
+      WHEN toll IN ('no') THEN 0
+      WHEN toll IS NOT NULL THEN 1
+      ELSE 0
+    END) AS toll,
+    (CASE
+      WHEN tags->'expressway' IN ('yes') THEN 1
+      ELSE NULL
+    END) AS expressway,
+    (CASE WHEN bicycle IN ('yes','1','designated','permissive') THEN 1
+      WHEN bicycle IN ('no','dismount') THEN 0 ELSE NULL
+      --TODO: why not tags->'cycleway' &+ tags->'cycleway:left' and tags->'cycleway:right' ?
+    END) AS cycleway, --NOTE: extension
+    layer,
+    tags->'level' AS level,
+    (CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
+    -- DO THE ZOOM modulation!
+    -- https://github.com/openmaptiles/openmaptiles/blob/master/layers/transportation/transportation.sql
+    -- also CHECK tracktypes! in style they look like asphalt roads
+    NULLIF({{line.bicycle}},'') AS bicycle,
+    NULLIF({{line.foot}},'') AS foot,
+    NULLIF({{line.horse}},'') AS horse,
+    NULLIF({{line.mtb_scale}},'') AS mtb_scale,
+    (CASE WHEN {{line.surface}} IN ('paved','asphalt','cobblestone','concrete',
+        'concrete:lanes','concrete:plates','metal','paving_stones','sett',
+        'unhewn_cobblestone','wood') THEN 'paved'
+      WHEN surface IN ('unpaved','compacted','dirt','earth','fine_gravel',
+        'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
+        'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
+    END) AS surface,
+    ST_AsMVTGeom({{line.way}},bounds_geom) AS geom
+  FROM {{line.table_name}}
+  WHERE (
+    {{line.railway}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
+      'monorail','tram')
+    OR {{line.highway}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
+      'pedestrian','bridleway','corridor','service','track','raceway','busway',
+      'bus_guideway','construction')
+    OR ({{line.highway}} IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
+    OR ({{line.highway}} IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
+    OR ({{line.highway}} IN ('tertiary','tertiary_link','road') AND z>=11)
+    OR ({{line.highway}} IN ('secondary','secondary_link') AND z>=9)
+    OR aerialway IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
+      'j-bar','mixed_lift')
+    OR route IN ('bicycle') --NOTE:extension
+  ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
+WHERE (z>=14) OR (12<=z AND z<13 AND class NOT IN ('path')) OR
+  (10<=z AND z<12 AND class NOT IN ('minor')) OR (z<10 AND class IN ('primary','bicycle_route') AND
+    -- extension
+    CASE WHEN class='bicycle_route' THEN network IN ('national') ELSE true END);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION public.omt_transportation(bounds_geom geometry,z integer)
-RETURNS setof row_omt_named_transportation
-AS $$
-SELECT * FROM public.line_omt_transportation(bounds_geom,z);
-    -- add UNION poly_omt_transportation( :
-  -- NEED tochange structure to read from point,line and polygon...
-  -- from point
-  --OR highway IN ('motorway_junction')
-  -- from polygon
-  --OR highway IN ('path','cycleway','bridleway','footway','corridor','pedestrian','steps')
-$$
-LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-
-CREATE OR REPLACE FUNCTION public.omt_waterway(bounds_geom geometry,z integer)
-RETURNS setof row_omt_waterway
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_waterway(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
 SELECT name,waterway AS class,
   (CASE
@@ -502,11 +549,11 @@ SELECT name,waterway AS class,
     WHEN tags->'ford' IS NOT NULL AND (tags->'ford')!='no' THEN 'ford'
   END) AS brunnel,
   (CASE
-    WHEN intermittent IN ('yes') THEN 1
+    WHEN {{line.intermittent}} IN ('yes') THEN 1
     ELSE 0
   END) AS intermittent,
   ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_line
+FROM {{line.table_name}}
 WHERE waterway IN ('stream','river','canal','drain','ditch')
   AND ST_Intersects(way,bounds_geom);
     --TODO: by-zoom specificities
@@ -514,26 +561,44 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION public.omt_place(bounds_geom geometry)
-RETURNS setof row_omt_place
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_place(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_place
 AS $$
-SELECT name,admin_level::integer AS capital,
-  place AS class,
-  (tags->'ISO3166-1') AS iso_a2,
-  z_order AS rank,
-  ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
-    WHEN tablefrom='polygon' THEN ST_Centroid(way) END),bounds_geom) AS geom
-FROM (
-  SELECT name,place,admin_level,tags,z_order,way,'polygon' AS tablefrom
-  FROM planet_osm_polygon UNION ALL
-  SELECT name,place,admin_level,tags,z_order,way,'point' AS tablefrom
-  FROM planet_osm_point ) AS layer_place
-  -- TODO: fix zürich affoltern not showing
-  -- TODO: does zürich city have multiple centroids ? maybe the polygon and the point are both showing...
--- distinguish tablefrom='point' -> WHERE place [only] IN ('island') ?
-WHERE place IN ('continent','country','state','province','city','town','village',
-    'hamlet','subrb','quarter','neighbourhood','isolated_dwelling','island')
-  AND ST_Intersects(way,bounds_geom);
+SELECT * FROM (
+  SELECT 
+{% if with_osm_id %} (CASE
+      WHEN tablefrom='point' THEN 'n'||osm_id
+      WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
+      WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
+    END) AS osm_id, {% endif %}
+{% if debug %} way_area, {% endif %}
+    name,admin_level::integer AS capital,place AS class,
+    (tags->'ISO3166-1') AS iso_a2,
+    (CASE WHEN way_area IS NULL
+        THEN get_point_admin_enclosing_rank(osm_id)
+      ELSE get_rank_by_area(way_area) END)+adjust_rank_by_class(place) AS rank,
+    ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
+      WHEN tablefrom='polygon' THEN ST_Centroid(way) END),bounds_geom) AS geom
+  FROM (
+    SELECT osm_id,
+      name,place,admin_level,tags,z_order,way,
+      way_area,'polygon' AS tablefrom
+    FROM planet_osm_polygon
+    WHERE place IN ('island')
+    UNION ALL
+    SELECT osm_id,
+      name,place,admin_level,tags,z_order,way,
+      get_point_admin_parent_area(osm_id) AS way_area,
+      'point' AS tablefrom
+    FROM planet_osm_point 
+    WHERE place IN ('continent','country','state','province','city','town','village',
+      'hamlet','subrb','quarter','neighbourhood','isolated_dwelling','island')
+    ) AS layer_place
+    -- TODO: fix zürich affoltern not showing
+    -- TODO: does zürich city have multiple centroids ? maybe the polygon and the point are both showing...
+  -- distinguish tablefrom='point' -> WHERE place [only] IN ('island') ?
+    WHERE ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
+  WHERE (z>=14) OR (12<=z AND z<14 AND rank<=8) OR (10<=z AND z<12 AND rank<=5) OR (10>z AND rank<=4);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -574,17 +639,17 @@ $$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
 -- also make sure z_order AS rank is not detrimental: DO FIRST maybe it's why small villages show
 -- on low zooms
 
-CREATE OR REPLACE FUNCTION public.omt_poi(bounds_geom geometry)
-RETURNS setof row_omt_poi
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi(bounds_geom geometry)
+RETURNS setof {{omt_typ_pref}}_poi
 AS $$
   -- TODO: weiningen the farm does not show. also check maplibre-basic, osm-bright
   --    and osm-liberty styles
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name,class,subclass,
-  (row_number() OVER (ORDER BY (CASE
-    WHEN name='' THEN 2000 ELSE get_poi_class_rank(class)END) ASC)/5)::int AS rank,
-  agg_stop,level,layer,indoor,geom FROM
+  (row_number() OVER (ORDER BY ((CASE
+  WHEN name IS NOT NULL THEN 600 ELSE 0 END)+get_poi_class_rank(class)) DESC))::int AS rank,
+  agg_stop,text_to_int_null(level) AS level,layer,indoor,geom FROM
 (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}
 	(CASE WHEN
@@ -708,7 +773,7 @@ SELECT
 			railway IN ('station') THEN 'railway'
 			WHEN aerialway IN ('station') THEN 'aerialway'
 		END) AS subclass_helper_key, -- distinguish railway=station and aerialway=station
-		0 AS agg_stop, -- TODO: not implemented
+		NULL::int AS agg_stop, -- TODO: not implemented
 		tags->'level' AS level,layer,
 		(CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
 		ST_AsMVTGeom(
@@ -788,8 +853,8 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 
-CREATE OR REPLACE FUNCTION public.omt_water(bounds_geom geometry)
-RETURNS setof row_omt_named_water
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry)
+RETURNS setof {{omt_typ_pref}}_named_water
 AS $$
 SELECT name,osm_id AS id,
   (CASE
@@ -818,7 +883,7 @@ WHERE (covered IS NULL OR covered != 'yes') AND (
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION public.omt_all(z integer, x integer, y integer)
+CREATE OR REPLACE FUNCTION {{omt_all_func}}(z integer, x integer, y integer)
 RETURNS bytea
 AS $$
 DECLARE
@@ -828,29 +893,34 @@ BEGIN
     SELECT ST_TileEnvelope(z,x,y) INTO bounds_geom;
     WITH
       premvt_transportation AS (
-        SELECT * FROM public.omt_transportation(bounds_geom,z)),
+        SELECT * FROM {{omt_func_pref}}_transportation(bounds_geom,z)),
       premvt_aeroway AS(
-        SELECT * FROM public.omt_aeroway(bounds_geom)),
+        SELECT * FROM {{omt_func_pref}}_aeroway(bounds_geom)),
       premvt_boundary AS (
-        SELECT * FROM public.omt_boundary(bounds_geom,z)),
+        SELECT * FROM {{omt_func_pref}}_boundary(bounds_geom,z)),
       premvt_building AS (
-        SELECT * FROM public.omt_building(bounds_geom,z)),
+        SELECT * FROM {{omt_func_pref}}_building(bounds_geom,z)),
       premvt_housenumber AS (
-        SELECT * FROM public.omt_housenumber(bounds_geom)),
+        SELECT * FROM {{omt_func_pref}}_housenumber(bounds_geom)),
       premvt_landuse AS (
-        SELECT * FROM public.omt_landuse(bounds_geom,z)),
+        SELECT * FROM {{omt_func_pref}}_landuse(bounds_geom,z)),
       premvt_landcover AS (
-        SELECT * FROM public.omt_landcover(bounds_geom,z)),
+        SELECT * FROM {{omt_func_pref}}_landcover(bounds_geom,z)),
       premvt_park AS (
-        SELECT *,name AS "name:latin" FROM public.omt_park(bounds_geom)),
+        SELECT {{additional_name_columns}} *
+        FROM {{omt_func_pref}}_park(bounds_geom)),
       premvt_place AS (
-        SELECT *,name AS "name:latin" FROM public.omt_place(bounds_geom)),
+        SELECT {{additional_name_columns}} *
+          {% if debug %} ,z {% endif %}
+        FROM {{omt_func_pref}}_place(bounds_geom,z)),
       premvt_poi AS (
-        SELECT *,name AS "name:latin" FROM public.omt_poi(bounds_geom)),
+        SELECT {{additional_name_columns}} *
+        FROM {{omt_func_pref}}_poi(bounds_geom)),
       premvt_water AS (
-        SELECT * FROM public.omt_water(bounds_geom)),
+        SELECT * FROM {{omt_func_pref}}_water(bounds_geom)),
       premvt_waterway AS (
-        SELECT *,name AS "name:latin" FROM public.omt_waterway(bounds_geom,z)),
+        SELECT {{additional_name_columns}} *
+        FROM {{omt_func_pref}}_waterway(bounds_geom,z)),
       -- the generated {layer} and {layer}_name:
       premvt_water_noname AS (
         SELECT
@@ -859,7 +929,7 @@ BEGIN
       ),
       premvt_water_name AS (
         SELECT
-          name,name AS "name:latin",class,
+          name,{{additional_name_columns}}
           -- TODO: WARN! different from water_noname
           intermittent,geom
         FROM premvt_water WHERE name IS NOT NULL
@@ -876,7 +946,9 @@ BEGIN
       premvt_transportation_name AS (
         SELECT
           {% if with_osm_id %} osm_id, {% endif %}
-          name,name AS "name:latin",ref,length(ref) AS ref_length,
+          {{additional_name_columns}}
+          name,{{additional_name_columns}}
+          ref,length(ref) AS ref_length,
           network,class,subclass,brunnel,level,layer,indoor,
           geom
         FROM premvt_transportation WHERE name IS NOT NULL
@@ -921,5 +993,5 @@ PARALLEL SAFE;
 -- TODO: landuse or landcover, debug: where are vineyards and why are they not showing ?
 
 
-SELECT length(public.omt_all(16,34303,22938));
+SELECT length({{omt_all_func}}(16,34303,22938));
 

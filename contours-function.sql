@@ -3,8 +3,9 @@
 CREATE OR REPLACE FUNCTION public.simplify_if_needed(way geometry,z integer)
 RETURNS geometry AS $$
 SELECT (CASE
-    WHEN z<= 5 THEN ST_SimplifyPreserveTopology(way,200)
-    WHEN z<= 7 THEN ST_SimplifyPreserveTopology(way, 50)
+    WHEN z<= 2 THEN ST_SimplifyPreserveTopology(way,100)
+    WHEN z<= 5 THEN ST_SimplifyPreserveTopology(way, 35)
+    WHEN z<= 7 THEN ST_SimplifyPreserveTopology(way, 15)
     WHEN z<=12 THEN ST_SimplifyPreserveTopology(way, 10)
     ELSE way
   END);

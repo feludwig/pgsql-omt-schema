@@ -212,7 +212,7 @@ SELECT CASE
   WHEN class IN ('continent','country','state') THEN -2
   WHEN class IN ('province','city') THEN -1
   WHEN class IN ('village') THEN +1
-  WHEN class IN ('hamlet','subrb','quarter','neighbourhood') THEN +2
+  WHEN class IN ('hamlet','suburb','quarter','neighbourhood') THEN +2
   WHEN class IN ('isolated_dwelling') THEN +3
     -- island, town
   ELSE 0
@@ -226,7 +226,8 @@ AS $$
   SELECT way_area FROM (SELECT id
     FROM planet_osm_rels WHERE planet_osm_member_ids(members,'N'::char(1)) && ARRAY[node_id]::bigint[]
     AND (members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_centre"}]')::jsonb
-      OR members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_center"}]')::jsonb)
+      OR members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_center"}]')::jsonb
+      OR members @> ('[{"type":"N","ref":'||node_id||',"role":"label"}]')::jsonb)
   ) AS parents
   JOIN planet_osm_polygon ON -parents.id=osm_id ORDER BY(way_area) DESC LIMIT 1;
 $$
@@ -622,7 +623,7 @@ SELECT * FROM (
       'point' AS tablefrom
     FROM planet_osm_point 
     WHERE place IN ('continent','country','state','province','city','town','village',
-      'hamlet','subrb','quarter','neighbourhood','isolated_dwelling','island')
+      'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place
     -- TODO: fix zürich affoltern not showing
     -- TODO: does zürich city have multiple centroids ? maybe the polygon and the point are both showing...
@@ -679,7 +680,7 @@ SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name,class,subclass,
   (row_number() OVER (ORDER BY ((CASE
-  WHEN name IS NOT NULL THEN 600 ELSE 0 END)+get_poi_class_rank(class)) DESC))::int AS rank,
+  WHEN name IS NOT NULL THEN -100 ELSE 0 END)+get_poi_class_rank(class)) ASC))::int AS rank,
   agg_stop,text_to_int_null(level) AS level,layer,indoor,geom FROM
 (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}

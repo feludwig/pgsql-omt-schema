@@ -4,69 +4,28 @@ import jinja2
 import psycopg2
 import argparse
 import typing
-import dataclasses
 import os
-
-@dataclasses.dataclass
-class Column :
-    name:str
-    type:str
-
-class TypeHandler() :
-    def __init__(self,c:psycopg2.extensions.cursor) :
-        c.execute('SELECT oid,typname,typcategory FROM pg_type;')
-        self.types={}
-        for (oid,typname,typcategory) in c.fetchall() :
-            self.types[oid]=(typname,typcategory)
-    def is_similar_type(self,a,b) :
-        try :
-            if isinstance(a,int) :
-                a_typ=self.types[a]
-            else :
-                a_typ=[i for i in self.types.values() if i[0]==a][0]
-            if isinstance(b,int) :
-                b_typ=self.types[b]
-            else :
-                b_typ=[i for i in self.types.values() if i[0]==b][0]
-            if a_typ[0]==b_typ[0] :
-                return True
-            if a_typ[1]==b_typ[1] :
-                return True
-        except IndexError :
-            print(a,b,'types uncomparable')
-            exit(1)
-        return False
 
 
 class GeoTable() :
-    def __init__(self,c:psycopg2.extensions.cursor,th:TypeHandler,table_oid:int,
-            need_columns:typing.Collection[Column],
+    def __init__(self,c:psycopg2.extensions.cursor,table_oid:int,
+            need_columns:typing.Collection[str],
             aliases:typing.Dict[str,str]) :
         self.aliases=aliases
         self.table_oid=table_oid
         q=c.mogrify('''SELECT attname,atttypid FROM pg_attribute
             WHERE attrelid=%s''',(table_oid,))
         c.execute(q)
-        need_columns_byname={col.name:col for col in need_columns}
-        tags_column=[col.name for col in need_columns if col.type=='hstore'][0]
 
+        tags_column='tags'
         for (colname,coltype,) in c.fetchall() :
-            if colname in need_columns_byname :
-                col=need_columns_byname[colname]
-                if th.is_similar_type(coltype,col.type) :
-                    self.__dict__[col.name]=f'"{self.aliased(col.name)}"'
-                else :
-                    self.__dict__[col.name]=f'("{self.aliased(col.name)}"::{col.type})'
-                    self.__dict__[col.name+'_a']=self.__dict__[col.name]+f' AS "{col.name}"'
-        for col in need_columns :
-            if col.name not in self.__dict__ :
-                if th.is_similar_type('text',col.type) :
-                    self.__dict__[col.name]='("'+tags_column+'"'+f"->'{col.name}')"
-                    self.__dict__[col.name+'_a']=self.__dict__[col.name]+f' AS "{col.name}"'
-                else :
-                    self.__dict__[col.name]='(("'+tags_column+'"'
-                    self.__dict__[col.name]+=f"->'{col.name}')::{col.type})"
-                    self.__dict__[col.name+'_a']=self.__dict__[col.name]+f' AS "{col.name}"'
+            if colname in need_columns :
+                self.__dict__[colname]=f'"{self.aliased(colname)}"'
+                self.__dict__[colname+'_v']=f'"{self.aliased(colname)}"'
+        for colname in need_columns :
+            if colname not in self.__dict__ :
+                self.__dict__[colname]='("'+tags_column+'"'+f"->'{colname}') AS {colname}"
+                self.__dict__[colname+'_v']='("'+tags_column+'"'+f"->'{colname}')"
 
         c.execute(c.mogrify('''SELECT 
             (SELECT nspname FROM pg_namespace WHERE oid=relnamespace),relname
@@ -79,12 +38,12 @@ class GeoTable() :
 
     def __getattr__(self,k) :
         if k not in self.__dict__ :
-            raise KeyError(f'Error key {k} not defined')
+            raise KeyError(f'Error key {self.table_name}.{k} not defined')
         return self.__dict__[k]
 
 
 def make_global_dict(c:psycopg2.extensions.cursor,
-        need_columns:typing.Dict[str,typing.Collection[Column]],
+        need_columns:typing.Dict[str,typing.Collection[str]],
         aliases:typing.Dict[str,typing.Dict[str,str]])->typing.Dict[str,GeoTable] :
     result={k:[] for k in need_columns.keys()}
     for t in result.keys() :
@@ -96,10 +55,9 @@ def make_global_dict(c:psycopg2.extensions.cursor,
             AND relkind NOT IN ('i','c','S') AND relname~E'_{t}$';''')
         for oid,relname,relkind,*_ in c.fetchall() :
             result[t].append(({'r':0,'m':1,'v':2}[relkind],oid))
-    th=TypeHandler(c)
     for k in result.keys() :
         choice=sorted(result[k])[0]
-        result[k]=GeoTable(c,th,choice[1],need_columns[k],aliases[k])
+        result[k]=GeoTable(c,choice[1],need_columns[k],aliases[k])
     return result
 
 # name you want to call it by (so without special symbols) -> name in the database to check
@@ -116,47 +74,28 @@ aliases={
 
 need_columns={
     'point':(
-        Column('housenumber','text'),
-        Column('name','text'),
-        Column('place','text'),
-        Column('aerialway','text'),
-        Column('layer','text'),
-        Column('level','text'),
-        Column('railway','text'),
-        Column('sport','text'),
-        Column('office','text'),
-        Column('tourism','text'),
-        Column('landuse','text'),
-        Column('barrier','text'),
-        Column('amenity','text'),
-        Column('admin_level','text'),
+        'housenumber', 'name', 'place', 'aerialway', 'layer',
+        'level', 'railway', 'sport', 'office', 'tourism',
+        'landuse', 'barrier', 'amenity', 'admin_level',
+        'waterway', 'building', 'shop', 'highway',
+        'leisure', 'historic', 'indoor', 
 
-        Column('way','geometry'),
-        Column('tags','hstore'),
-        Column('z_order','int4'),
-        Column('osm_id','int8'),
+        'way', 'tags', 'osm_id',
     ),
     'line':(
-        Column('amenity','text'),
-        Column('bicycle','text'),
-        Column('foot','text'),
-        Column('horse','text'),
-        Column('surface','text'),
-        Column('mtb_scale','text'),
-        Column('boundary','text'),
-        Column('admin_level','text'),
-        Column('highway','text'),
-        Column('railway','text'),
-        Column('intermittent','text'),
+        'amenity', 'bicycle', 'foot', 'horse', 'surface',
+        'mtb_scale', 'boundary', 'admin_level', 'highway',
+        'railway', 'intermittent',
 
-        Column('way','geometry'),
-        Column('tags','hstore'),
+        'way', 'tags', 'osm_id',
     ),
     'polygon':(
-        Column('boundary','text'),
+        'boundary', 'railway', 'sport', 'office', 'tourism',
+        'landuse', 'barrier', 'amenity', 'aerialway', 'layer',
+        'name', 'indoor', 'waterway', 'building', 'shop',
+        'highway', 'leisure', 'historic', 'level', 'place',
 
-        Column('tags','hstore'),
-        Column('osm_id','int8'),
+        'way_area', 'way', 'tags', 'osm_id',
     ),
 }
 

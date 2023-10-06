@@ -115,7 +115,11 @@ if __name__=='__main__' :
         # this is only added at the end, after the typedefed-rows have been
         #   generated. tags are not available anymore
         'additional_name_columns':'name AS "name:latin",',
-        # NO SPACES!
+        # other non-spec behaviour: the rank value is still filtering out items
+        # on z>17 even though the spec says it SHOULD show all.
+        # to force show all at z>=17, this workaround:
+        'same_rank_poi_high_zooms':True,
+        # NO SPACES in value!
         'omt_typ_pref':'row_omt',
         # all functions except omt_all_func will have this prefix
         'omt_func_pref':'public.omt',

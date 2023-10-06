@@ -691,7 +691,7 @@ $$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
 -- also make sure z_order AS rank is not detrimental: DO FIRST maybe it's why small villages show
 -- on low zooms
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi(bounds_geom geometry)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_poi
 AS $$
   -- TODO: weiningen the farm does not show. also check maplibre-basic, osm-bright
@@ -699,8 +699,10 @@ AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name,class,subclass,
+{% if same_rank_poi_high_zooms %} (CASE WHEN z>=17 THEN 30::int ELSE {%endif%}
   (row_number() OVER (ORDER BY ((CASE
-  WHEN name IS NOT NULL THEN -100 ELSE 0 END)+{{omt_func_pref}}_get_poi_class_rank(class)) ASC))::int AS rank,
+  WHEN name IS NOT NULL THEN -100 ELSE 0 END)+{{omt_func_pref}}_get_poi_class_rank(class)) ASC))::int
+{% if same_rank_poi_high_zooms %} END) {%endif%} AS rank,
   agg_stop,{{omt_func_pref}}_text_to_int_null(level) AS level,layer,indoor,geom FROM
 (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}
@@ -976,7 +978,7 @@ BEGIN
         FROM {{omt_func_pref}}_place(bounds_geom,z)),
       premvt_poi AS (
         SELECT {{additional_name_columns}} *
-        FROM {{omt_func_pref}}_poi(bounds_geom)),
+        FROM {{omt_func_pref}}_poi(bounds_geom,z)),
       premvt_water AS (
         SELECT * FROM {{omt_func_pref}}_water(bounds_geom)),
       premvt_waterway AS (

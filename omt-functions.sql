@@ -13,6 +13,9 @@
 --    or could also be 'name AS name_en'.
 --    set additional_name_columns='' to not have any effect
 
+-- I give up: aggregate geometries!
+--  to do on roads at low zooms, to prevent multiple refs shown for the same road
+
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aerodrome_label CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aeroway CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_boundary CASCADE;
@@ -530,7 +533,7 @@ SELECT * FROM (
       'j-bar','mixed_lift')
     OR route IN ('bicycle') --NOTE:extension
   ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
-WHERE (z>=14) OR (12<=z AND z<13 AND class NOT IN ('path')) OR
+WHERE (z>=14) OR (12<=z AND z<14 AND class NOT IN ('path')) OR
   (10<=z AND z<12 AND class NOT IN ('minor')) OR (z<10 AND class IN ('primary','bicycle_route') AND
     -- extension
     CASE WHEN class='bicycle_route' THEN network IN ('national') ELSE true END);

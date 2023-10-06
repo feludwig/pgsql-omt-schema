@@ -1,8 +1,27 @@
 
--- TODO: 
---  move all column names to templated column names for tags lookup and possibly column different
---    semantics -> "highway" becomes {{ line.highway }}
+-- TEMPLATE usage:
+-- need to define variables in run.py, then
+-- SYNTAX {% if debug %} THEN SQL STATEMENT {% else %} ELSE SQL STATEMENT {% endif %}
+--    where debug is a boolean variable
+-- other SYNTAX {{ omt_func_pref }}
+--    where omt_func_pref is a text variable
 
+-- VARIABLES available :
+--  {point} the table storing all point features, default osm2pgsql name planet_osm_point
+--    -> {point.table_name} in a FROM {},
+--    -> {point.<column_name>} in a SELECT foo, {} FROM ...
+--        this becomes "(tags->'col') AS col" when col was not detected in db, and "col" otherwise
+--    -> {point.<column_name>_v} in a SELECT ({}+1) AS computed_value [v for value]
+--        this becomes "(tags->'col')" when col was not detected, and "col" otherwise
+--  {line} the table storing all line features, default osm2pgsql name planet_osm_line
+--    -> exaclty like {point}, there is a {line.table_name} and
+--    -> {line.<column_name>} and {line.<column_name>_v}
+--  {polygon} the table storing all line features, default osm2pgsql name planet_osm_polygon
+--    -> exaclty like {point}, there is a {polygon.table_name} and
+--    -> {polygon.<column_name>} and {polygon.<column_name>_v}
+
+
+-- TODO: 
 --  move all table names to templated table names
 
 -- add template prefix for function names, default [ omt_func_pref='omt' ]_transportation
@@ -95,7 +114,7 @@ CREATE TYPE {{omt_typ_pref}}_boundary AS (
 CREATE TYPE {{omt_typ_pref}}_building AS (
   render_height real,
   render_min_height real,
-  colour text, -- in format '#rrggbb'
+  --colour text, -- in format '#rrggbb' TODO!
   hide_3d boolean,
   geom geometry
 );
@@ -182,7 +201,7 @@ CREATE TYPE {{omt_typ_pref}}_waterway AS (
 
 
 --utilities
-CREATE OR REPLACE FUNCTION text_to_real_0(data text) RETURNS real
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_text_to_real_0(data text) RETURNS real
 AS $$
 SELECT CASE
   WHEN data~E'^\\d+(\\.\\d+)?$' THEN data::real
@@ -191,7 +210,7 @@ SELECT CASE
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION text_to_int_null(data text) RETURNS integer
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_text_to_int_null(data text) RETURNS integer
 AS $$
 SELECT CASE
   WHEN data~E'^\\d$' THEN data::integer
@@ -199,14 +218,14 @@ SELECT CASE
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION get_rank_by_area(area real) RETURNS int
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_rank_by_area(area real) RETURNS int
 AS $$
 SELECT CASE WHEN v.val<1 THEN 1 ELSE v.val END
   FROM (SELECT -1*log(20.0,area::numeric)::int+10 AS val) AS v;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION adjust_rank_by_class(class text) RETURNS int
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_adjust_rank_by_class(class text) RETURNS int
 AS $$
 SELECT CASE 
   WHEN class IN ('continent','country','state') THEN -2
@@ -221,7 +240,7 @@ $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION get_point_admin_parent_area(node_id bigint) RETURNS real
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_point_admin_parent_area(node_id bigint) RETURNS real
 AS $$
   SELECT way_area FROM (SELECT id
     FROM planet_osm_rels WHERE planet_osm_member_ids(members,'N'::char(1)) && ARRAY[node_id]::bigint[]
@@ -229,12 +248,13 @@ AS $$
       OR members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_center"}]')::jsonb
       OR members @> ('[{"type":"N","ref":'||node_id||',"role":"label"}]')::jsonb)
   ) AS parents
-  JOIN planet_osm_polygon ON -parents.id=osm_id ORDER BY(way_area) DESC LIMIT 1;
+  JOIN {{polygon.table_name}} ON -parents.id={{polygon.osm_id_v}}
+  ORDER BY({{polygon.way_area_v}}) DESC LIMIT 1;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION get_point_admin_enclosing_rank(node_id bigint) RETURNS int
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_point_admin_enclosing_rank(node_id bigint) RETURNS int
   -- a neighbourhood is not the admin_centre of anything. instead take its enclosing lowest
   -- admin level. add 1 to the rank to signify smaller than the administrative boundary
   -- BUT if the name is the same for that admin level, take ist rank (+0)
@@ -258,27 +278,27 @@ RETURNS setof {{omt_typ_pref}}_landuse
 AS $$
 SELECT
   (CASE
-    WHEN landuse IN ('railway','cemetery','miltary','quarry','residential','commercial',
-      'industrial','garages','retail') THEN landuse
-    WHEN amenity IN ('bus_station','school','university','kindergarden','college',
+    WHEN {{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
+      'industrial','garages','retail') THEN {{polygon.landuse_v}}
+    WHEN {{polygon.amenity_v}} IN ('bus_station','school','university','kindergarden','college',
       'library','hospital','grave_yard') THEN
-      CASE amenity WHEN 'grave_yard' THEN 'cemetery' ELSE amenity END
-    WHEN leisure IN ('stadium','pitch','playground','track') THEN leisure
-    WHEN tourism IN ('theme_park','zoo') THEN tourism
-    WHEN place IN ('suburbquarter','neighbourhood') THEN place
-    WHEN waterway IN ('dam') THEN waterway
+      CASE {{polygon.amenity_v}} WHEN 'grave_yard' THEN 'cemetery' ELSE {{polygon.amenity_v}} END
+    WHEN {{polygon.leisure_v}} IN ('stadium','pitch','playground','track') THEN {{polygon.leisure_v}}
+    WHEN {{polygon.tourism_v}} IN ('theme_park','zoo') THEN {{polygon.tourism_v}}
+    WHEN {{polygon.place_v}} IN ('suburbquarter','neighbourhood') THEN {{polygon.place_v}}
+    WHEN {{polygon.waterway_v}} IN ('dam') THEN {{polygon.waterway_v}}
   END) AS class,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_polygon
-WHERE (landuse IN ('railway','cemetery','miltary','quarry','residential','commercial',
+  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+FROM {{polygon.table_name}}
+WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
       'industrial','garages','retail')
-  OR leisure IN ('stadium','pitch','playground','track')
-  OR tourism IN ('theme_park','zoo') OR place IN ('suburbquarter','neighbourhood')
-  OR amenity IN ('bus_station','school','university','kindergarden','college',
-      'library','hospital','grave_yard') OR waterway IN ('dam')
-  ) AND ST_Intersects(way,bounds_geom) AND (
-    (z>=14 OR way_area>1500)
-    AND (z>=11 OR way_area>8000)
+  OR {{polygon.leisure_v}} IN ('stadium','pitch','playground','track')
+  OR {{polygon.tourism_v}} IN ('theme_park','zoo') OR {{polygon.place_v}} IN ('suburbquarter','neighbourhood')
+  OR {{polygon.amenity_v}} IN ('bus_station','school','university','kindergarden','college',
+      'library','hospital','grave_yard') OR {{polygon.waterway_v}} IN ('dam')
+  ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
+    (z>=14 OR {{polygon.way_area_v}}>1500)
+    AND (z>=11 OR {{polygon.way_area_v}}>8000)
   );
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -341,10 +361,10 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_building(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_building
 AS $$
-SELECT text_to_real_0(tags->'height') AS render_height,
-  COALESCE(text_to_real_0(tags->'min_height'),
-    text_to_real_0(tags->'building:levels')*2.5)::real AS render_min_height,
-  '#ffff00' AS colour,
+SELECT {{omt_func_pref}}_text_to_real_0(tags->'height') AS render_height,
+  COALESCE({{omt_func_pref}}_text_to_real_0(tags->'min_height'),
+    {{omt_func_pref}}_text_to_real_0(tags->'building:levels')*2.5)::real AS render_min_height,
+  --'#ffff00' AS colour,
   (CASE WHEN tags->'building:part' IS NULL THEN false ELSE true END) AS hide_3d,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM planet_osm_polygon
@@ -406,7 +426,7 @@ SELECT "addr:housenumber" AS housenumber,
 FROM (
   SELECT "addr:housenumber",way,'line' AS tablefrom FROM {{line.table_name}}
   UNION ALL
-  SELECT "addr:housenumber",way,'point' AS tablefrom FROM planet_osm_point
+  SELECT "addr:housenumber",way,'point' AS tablefrom FROM {{point.table_name}}
   UNION ALL
   SELECT "addr:housenumber",way,'polygon' AS tablefrom FROM planet_osm_polygon)
     AS layer_housenumber
@@ -507,29 +527,29 @@ SELECT * FROM (
     -- DO THE ZOOM modulation!
     -- https://github.com/openmaptiles/openmaptiles/blob/master/layers/transportation/transportation.sql
     -- also CHECK tracktypes! in style they look like asphalt roads
-    NULLIF({{line.bicycle}},'') AS bicycle,
-    NULLIF({{line.foot}},'') AS foot,
-    NULLIF({{line.horse}},'') AS horse,
-    NULLIF({{line.mtb_scale}},'') AS mtb_scale,
-    (CASE WHEN {{line.surface}} IN ('paved','asphalt','cobblestone','concrete',
+    NULLIF({{line.bicycle_v}},'') AS bicycle,
+    NULLIF({{line.foot_v}},'') AS foot,
+    NULLIF({{line.horse_v}},'') AS horse,
+    NULLIF({{line.mtb_scale_v}},'') AS mtb_scale,
+    (CASE WHEN {{line.surface_v}} IN ('paved','asphalt','cobblestone','concrete',
         'concrete:lanes','concrete:plates','metal','paving_stones','sett',
         'unhewn_cobblestone','wood') THEN 'paved'
-      WHEN surface IN ('unpaved','compacted','dirt','earth','fine_gravel',
+      WHEN {{line.surface_v}} IN ('unpaved','compacted','dirt','earth','fine_gravel',
         'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
         'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
     END) AS surface,
-    ST_AsMVTGeom({{line.way}},bounds_geom) AS geom
+    ST_AsMVTGeom({{line.way_v}},bounds_geom) AS geom
   FROM {{line.table_name}}
   WHERE (
-    {{line.railway}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
+    {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
       'monorail','tram')
-    OR {{line.highway}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
+    OR {{line.highway_v}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
       'pedestrian','bridleway','corridor','service','track','raceway','busway',
       'bus_guideway','construction')
-    OR ({{line.highway}} IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
-    OR ({{line.highway}} IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
-    OR ({{line.highway}} IN ('tertiary','tertiary_link','road') AND z>=11)
-    OR ({{line.highway}} IN ('secondary','secondary_link') AND z>=9)
+    OR ({{line.highway_v}} IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
+    OR ({{line.highway_v}} IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
+    OR ({{line.highway_v}} IN ('tertiary','tertiary_link','road') AND z>=11)
+    OR ({{line.highway_v}} IN ('secondary','secondary_link') AND z>=9)
     OR aerialway IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
       'j-bar','mixed_lift')
     OR route IN ('bicycle') --NOTE:extension
@@ -606,7 +626,7 @@ SELECT * FROM (
     name,admin_level::integer AS capital,place AS class,
     (tags->'ISO3166-1') AS iso_a2,
     (CASE WHEN way_area IS NULL
-        THEN get_point_admin_enclosing_rank(osm_id)
+        THEN {{omt_func_pref}}_get_point_admin_enclosing_rank(osm_id)
       ELSE get_rank_by_area(way_area) END)+adjust_rank_by_class(place) AS rank,
     ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
       WHEN tablefrom='polygon' THEN ST_Centroid(way) END),bounds_geom) AS geom
@@ -619,9 +639,9 @@ SELECT * FROM (
     UNION ALL
     SELECT osm_id,
       name,place,admin_level,tags,z_order,way,
-      get_point_admin_parent_area(osm_id) AS way_area,
+      {{omt_func_pref}}_get_point_admin_parent_area(osm_id) AS way_area,
       'point' AS tablefrom
-    FROM planet_osm_point 
+    FROM {{point.table_name}} 
     WHERE place IN ('continent','country','state','province','city','town','village',
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place
@@ -634,7 +654,7 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION get_poi_class_rank(class text)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_poi_class_rank(class text)
     RETURNS int AS
 $$
 SELECT CASE class
@@ -680,8 +700,8 @@ SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name,class,subclass,
   (row_number() OVER (ORDER BY ((CASE
-  WHEN name IS NOT NULL THEN -100 ELSE 0 END)+get_poi_class_rank(class)) ASC))::int AS rank,
-  agg_stop,text_to_int_null(level) AS level,layer,indoor,geom FROM
+  WHEN name IS NOT NULL THEN -100 ELSE 0 END)+{{omt_func_pref}}_get_poi_class_rank(class)) ASC))::int AS rank,
+  agg_stop,{{omt_func_pref}}_text_to_int_null(level) AS level,layer,indoor,geom FROM
 (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}
 	(CASE WHEN
@@ -806,24 +826,33 @@ SELECT
 			WHEN aerialway IN ('station') THEN 'aerialway'
 		END) AS subclass_helper_key, -- distinguish railway=station and aerialway=station
 		NULL::int AS agg_stop, -- TODO: not implemented
-		tags->'level' AS level,layer,
-		(CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
+		level AS level,layer,
+		(CASE WHEN indoor IN ('yes','1') THEN 1 END) AS indoor,
 		ST_AsMVTGeom(
       (CASE WHEN tablefrom = 'point' THEN way
       WHEN tablefrom='polygon' THEN ST_Centroid(way) END)
       ,bounds_geom) AS geom
 	FROM (
-    SELECT name,waterway,building,shop,highway,leisure,historic,
+    SELECT
 {% if with_osm_id %} 'n'||osm_id AS osm_id, {% endif %}
-      railway,sport,office,tourism,landuse,barrier,amenity,
-      aerialway,tags,layer,way,'point' AS tablefrom FROM planet_osm_point
+      {{point.name}},{{point.waterway}},{{point.building}},{{point.shop}},
+      {{point.highway}},{{point.leisure}},{{point.historic}},
+      {{point.railway}},{{point.sport}},{{point.office}},{{point.tourism}},
+      {{point.landuse}},{{point.barrier}},{{point.amenity}},{{point.aerialway}},
+      {{point.level}},{{point.indoor}},{{point.layer}},{{point.way}},
+      'point' AS tablefrom FROM {{point.table_name}}
     UNION ALL
-    SELECT name,waterway,building,shop,highway,leisure,historic,
+    SELECT
 {% if with_osm_id %}
   (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
 {% endif %}
-      railway,sport,office,tourism,landuse,barrier,amenity,
-      aerialway,tags,layer,way,'polygon' AS tablefrom FROM planet_osm_polygon) AS layer_poi
+      {{polygon.name}},{{polygon.waterway}},{{polygon.building}},{{polygon.shop}},
+      {{polygon.highway}},{{polygon.leisure}},{{polygon.historic}},
+      {{polygon.railway}},{{polygon.sport}},{{polygon.office}},{{polygon.tourism}},
+      {{polygon.landuse}},{{polygon.barrier}},{{polygon.amenity}},{{polygon.aerialway}},
+      {{polygon.level}},{{polygon.indoor}},{{polygon.layer}},{{polygon.way}},
+      'polygon' AS tablefrom FROM {{polygon.table_name}}
+    ) AS layer_poi
 	WHERE (
 		waterway IN ('dock')
 		OR building IN ('dormitory')

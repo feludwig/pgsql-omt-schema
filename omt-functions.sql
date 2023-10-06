@@ -415,7 +415,7 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_merge_transportation(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_named_transportation
 AS $$
 SELECT * FROM (
@@ -443,7 +443,7 @@ SELECT * FROM (
         AND construction !='no' THEN '_construction' ELSE '' END)
       WHEN highway IN ('road') THEN 'unknown'
       WHEN highway IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
-        THEN substr(highway,-5)
+        THEN substring(highway,'([a-z]+)')
       WHEN route IN ('bicycle') OR highway IN ('cycleway') THEN 'bicycle_route' --NOTE:extension
       --WHEN highway IN ('cycleway') THEN 'bicycle_route' -- NOTE:extension, MOVE cycleway->path here
       WHEN highway IN ('path','pedestrian','footway','steps') THEN 'path'||(
@@ -541,6 +541,33 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_named_transportation
+AS $$
+SELECT
+{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
+  name,ref,class,(array_agg(subclass))[1] AS subclass,
+  (array_agg(network))[1] AS network,brunnel,
+  oneway,min(ramp) AS ramp,(array_agg(service))[1] AS service,
+  access,max(toll) AS toll,max(expressway) AS expressway,
+  max(cycleway) AS cycleway,
+  layer,(array_agg(level))[1] AS level,
+  max(indoor) AS indoor,(array_agg(bicycle))[1] AS bicycle,
+  (array_agg(foot))[1] AS foot,(array_agg(horse))[1] AS horse,
+  (array_agg(mtb_scale))[1] AS mtb_scale,(array_agg(surface))[1] AS surface,
+  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
+FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
+-- deduce that a road MAY be candidate for merging if :
+--  same name, class and ref accross geometry features
+--  FILTER OUT bridge or tunnel segments (those will be rendered differently)
+--  FILTER OUT access and oneway: a normal road can become oneway and still have the same name
+--  FILTER OUT layer, similar reasoning like bridge/tunnel: renders sections of road diff
+--  DO NOT FILTER OUT: indoor: because how would that happen anyways ?
+GROUP BY(name,class,ref,brunnel,oneway,access,layer);
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_waterway(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_waterway
@@ -604,6 +631,7 @@ SELECT * FROM (
   WHERE (z>=14) OR (12<=z AND z<14 AND rank<=8) OR (10<=z AND z<12 AND rank<=5) OR (10>z AND rank<=4);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
 
 CREATE OR REPLACE FUNCTION get_poi_class_rank(class text)
     RETURNS int AS

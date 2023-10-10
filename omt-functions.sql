@@ -22,18 +22,12 @@
 
 
 -- TODO: 
---  move all table names to templated table names
+--  *move all table names to templated table names
+--  *after moved all column names to template, check 5432 database as well
 
--- add template prefix for function names, default [ omt_func_pref='omt' ]_transportation
--- add templ prefix for typenames, default [ omt_typ_pref='row_omt' ]_named_transportation
--- add templ "all" function name [ omt_all_func='omt_all' ]
-
--- the template {{ additional_name_columns }} == 'name AS "name:latin",' eg for osm_bright
---    or could also be 'name AS name_en'.
---    set additional_name_columns='' to not have any effect
-
--- I give up: aggregate geometries!
---  to do on roads at low zooms, to prevent multiple refs shown for the same road
+-- implementation details:
+--  see https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions#Inlining_conditions_for_table_functions
+--  for why this is mostly LANGUAGE 'sql' and not 'plpgsql'
 
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aerodrome_label CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aeroway CASCADE;
@@ -562,7 +556,34 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_z_low_13(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_named_transportation
+AS $$
+-- similar to _transportation_z_low_13 but less discriminate because less
+--  features are shown anywawys
+-- motivation:merge more columns together, because at z>=13 names of
+-- roads are not shown anyways, nor bridges etc...
+SELECT
+{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
+  NULL AS name, -- transportation_name is then empty
+  ref,class,(array_agg(subclass))[1] AS subclass,
+  (array_agg(network))[1] AS network,(array_agg(brunnel))[1] AS brunnel,
+  (array_agg(oneway))[1] AS oneway,min(ramp) AS ramp,
+  (array_agg(service))[1] AS service,
+  (array_agg(access))[1] AS access,max(toll) AS toll,
+  max(expressway) AS expressway,max(cycleway) AS cycleway,
+  layer,(array_agg(level))[1] AS level,
+  max(indoor) AS indoor,(array_agg(bicycle))[1] AS bicycle,
+  (array_agg(foot))[1] AS foot,(array_agg(horse))[1] AS horse,
+  (array_agg(mtb_scale))[1] AS mtb_scale,(array_agg(surface))[1] AS surface,
+  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
+FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
+GROUP BY(class,ref,layer);
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_highz(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_named_transportation
 AS $$
 SELECT
@@ -584,10 +605,25 @@ FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
 --  FILTER OUT access and oneway: a normal road can become oneway and still have the same name
 --  FILTER OUT layer, similar reasoning like bridge/tunnel: renders sections of road diff
 --  DO NOT FILTER OUT: indoor: because how would that happen anyways ?
+-- then do the merging with unnest(ST_ClusterIntersecting())::multigeometries
+-- ST_CollectionExtract(*,2) extracts only line features, ST_LineMerge then merges these
+--  multigeometries to single geometries
 GROUP BY(name,class,ref,brunnel,oneway,access,layer);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_named_transportation
+AS $$
+BEGIN IF (z<13) THEN
+  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_13(bounds_geom,z);
+ELSE
+  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_highz(bounds_geom,z);
+END IF;
+END
+$$
+LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_waterway(bounds_geom geometry,z integer)
@@ -694,8 +730,11 @@ $$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_poi
 AS $$
-  -- TODO: weiningen the farm does not show. also check maplibre-basic, osm-bright
-  --    and osm-liberty styles
+  -- TODO: I don't like how named pois override nearby pois, instead they should all show
+  -- logos and only at high zoom or onlick show name. see zurich towncentre and compare with
+  -- openstreetmap raster style
+-- TODO: the rank copmutation and documentation are very unclear and how they are now could be better
+-- additional source: https://wiki.openstreetmap.org/wiki/OpenStreetMap_Carto/Symbols#Shops_and_services
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name,class,subclass,
@@ -716,7 +755,9 @@ SELECT
 			'mobile_phone','newsagent','optician','outdoor','paint','perfumery',
 			'perfume','pet','photo','second_hand','shoes','sports','stationery',
 			'tailor','tattoo','ticket','tobacco','toys','travel_agency','watches',
-			'weapons','wholesale') THEN 'shop'
+			'weapons','wholesale', --added later
+      'farm','jewellery','pastry','trade'
+    ) THEN 'shop'
     WHEN subclass IN ('townhall','town_hall', 'public_building', 'courthouse',
       'community_centre') THEN 'town_hall'
     WHEN subclass IN ('golf', 'golf_course', 'miniature_golf') THEN 'golf'
@@ -777,6 +818,12 @@ SELECT
 			'tattoo','ticket','tobacco','toys','travel_agency','video','video_games',
 			'watches','weapons','wholesale','wine')
 			THEN shop
+    --added later from openstreetmap wiki/symbols tab
+    WHEN shop IN ('farm') THEN 'greengrocer'
+    WHEN shop IN ('jewellery') THEN 'jewelry'
+    WHEN shop IN ('pastry') THEN 'confectionery'
+    WHEN shop IN ('trade') THEN 'wholesale'
+    WHEN shop IN ('fashion') THEN 'clothes'
     WHEN highway IN ('bus_stop') THEN highway
     WHEN leisure IN ('dog_park','escape_game','garden','golf_course','ice_rink',
 			'hackerspace','marina','miniature_golf','park','pitch','playground',
@@ -871,7 +918,9 @@ SELECT
 			'optician','outdoor','paint','perfume','perfumery','pet','photo',
 			'second_hand','shoes','sports','stationery','supermarket','tailor',
 			'tattoo','ticket','tobacco','toys','travel_agency','video','video_games',
-			'watches','weapons','wholesale','wine')
+			'watches','weapons','wholesale','wine', -- added later on:
+      'farm','jewellery','pastry','trade','fashion'
+      )
 		OR highway IN ('bus_stop')
 		OR leisure IN ('dog_park','escape_game','garden','golf_course','ice_rink',
 			'hackerspace','marina','miniature_golf','park','pitch','playground',
@@ -949,111 +998,102 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_all_func}}(z integer, x integer, y integer)
 RETURNS bytea
 AS $$
-DECLARE
-    result bytea;
-    bounds_geom geometry;
-BEGIN
-    SELECT ST_TileEnvelope(z,x,y) INTO bounds_geom;
-    WITH
-      premvt_transportation AS (
-        SELECT * FROM {{omt_func_pref}}_transportation(bounds_geom,z)),
-      premvt_aeroway AS(
-        SELECT * FROM {{omt_func_pref}}_aeroway(bounds_geom)),
-      premvt_boundary AS (
-        SELECT * FROM {{omt_func_pref}}_boundary(bounds_geom,z)),
-      premvt_building AS (
-        SELECT * FROM {{omt_func_pref}}_building(bounds_geom,z)),
-      premvt_housenumber AS (
-        SELECT * FROM {{omt_func_pref}}_housenumber(bounds_geom)),
-      premvt_landuse AS (
-        SELECT * FROM {{omt_func_pref}}_landuse(bounds_geom,z)),
-      premvt_landcover AS (
-        SELECT * FROM {{omt_func_pref}}_landcover(bounds_geom,z)),
-      premvt_park AS (
-        SELECT {{additional_name_columns}} *
-        FROM {{omt_func_pref}}_park(bounds_geom)),
-      premvt_place AS (
-        SELECT {{additional_name_columns}} *
-          {% if debug %} ,z {% endif %}
-        FROM {{omt_func_pref}}_place(bounds_geom,z)),
-      premvt_poi AS (
-        SELECT {{additional_name_columns}} *
-        FROM {{omt_func_pref}}_poi(bounds_geom,z)),
-      premvt_water AS (
-        SELECT * FROM {{omt_func_pref}}_water(bounds_geom)),
-      premvt_waterway AS (
-        SELECT {{additional_name_columns}} *
-        FROM {{omt_func_pref}}_waterway(bounds_geom,z)),
-      -- the generated {layer} and {layer}_name:
-      premvt_water_noname AS (
-        SELECT
-          id,class,intermittent,brunnel,geom
-        FROM premvt_water
-      ),
-      premvt_water_name AS (
-        SELECT
-          name,{{additional_name_columns}}
-          -- TODO: WARN! different from water_noname
-          intermittent,geom
-        FROM premvt_water WHERE name IS NOT NULL
-      ),
-      premvt_transportation_noname AS (
-        SELECT
-          {% if with_osm_id %} osm_id, {% endif %}
-          network,class,subclass,brunnel,oneway,ramp,service,
-          access,toll,expressway,cycleway,level,layer,indoor,bicycle,
-          foot,horse,mtb_scale,surface,
-          geom
-        FROM premvt_transportation
-      ),
-      premvt_transportation_name AS (
-        SELECT
-          {% if with_osm_id %} osm_id, {% endif %}
-          {{additional_name_columns}}
-          name,{{additional_name_columns}}
-          ref,length(ref) AS ref_length,
-          network,class,subclass,brunnel,level,layer,indoor,
-          geom
-        FROM premvt_transportation WHERE name IS NOT NULL
-      )
-    SELECT string_agg(foo.mvt,''::bytea) FROM (
-      SELECT ST_AsMVT(premvt_aeroway,'aeroway') AS mvt
-        FROM premvt_aeroway UNION
-      SELECT ST_AsMVT(premvt_boundary,'boundary') AS mvt
-        FROM premvt_boundary UNION
-      SELECT ST_AsMVT(premvt_building,'building') AS mvt
-        FROM premvt_building UNION
-      SELECT ST_AsMVT(premvt_housenumber,'housenumber') AS mvt
-        FROM premvt_housenumber UNION
-      SELECT ST_AsMVT(premvt_landuse,'landuse') AS mvt
-        FROM premvt_landuse UNION
-      SELECT ST_AsMVT(premvt_landcover,'landcover') AS mvt
-        FROM premvt_landcover UNION
-      SELECT ST_AsMVT(premvt_park,'park') AS mvt
-        FROM premvt_park UNION
-      SELECT ST_AsMVT(premvt_place,'place') AS mvt
-        FROM premvt_place UNION
-      SELECT ST_AsMVT(premvt_poi,'poi') AS mvt
-        FROM premvt_poi UNION
-      SELECT ST_AsMVT(premvt_waterway,'waterway') AS mvt
-        FROM premvt_waterway UNION
-      SELECT ST_AsMVT(premvt_water_noname,'water') AS mvt
-        FROM premvt_water_noname UNION
-      SELECT ST_AsMVT(premvt_water_name,'water_name') AS mvt
-        FROM premvt_water_name UNION
-      SELECT ST_AsMVT(premvt_transportation_noname,'transportation') AS mvt
-        FROM premvt_transportation_noname UNION
-      SELECT ST_AsMVT(premvt_transportation_name,'transportation_name') AS mvt
-        FROM premvt_transportation_name
-    ) AS foo INTO result;
-    RETURN result;
-END;
+-- ST_TileEnvelope should be cached:
+-- SELECT pg_get_functiondef('st_tileenvelope'::regproc) ~ 'IMMUTABLE';
+WITH
+  premvt_transportation AS (
+    SELECT * FROM {{omt_func_pref}}_transportation(ST_TileEnvelope(z,x,y),z)),
+  premvt_aeroway AS(
+    SELECT * FROM {{omt_func_pref}}_aeroway(ST_TileEnvelope(z,x,y))),
+  premvt_boundary AS (
+    SELECT * FROM {{omt_func_pref}}_boundary(ST_TileEnvelope(z,x,y),z)),
+  premvt_building AS (
+    SELECT * FROM {{omt_func_pref}}_building(ST_TileEnvelope(z,x,y),z)),
+  premvt_housenumber AS (
+    SELECT * FROM {{omt_func_pref}}_housenumber(ST_TileEnvelope(z,x,y))),
+  premvt_landuse AS (
+    SELECT * FROM {{omt_func_pref}}_landuse(ST_TileEnvelope(z,x,y),z)),
+  premvt_landcover AS (
+    SELECT * FROM {{omt_func_pref}}_landcover(ST_TileEnvelope(z,x,y),z)),
+  premvt_park AS (
+    SELECT {{additional_name_columns}} *
+    FROM {{omt_func_pref}}_park(ST_TileEnvelope(z,x,y))),
+  premvt_place AS (
+    SELECT {{additional_name_columns}} *
+      {% if debug %} ,z {% endif %}
+    FROM {{omt_func_pref}}_place(ST_TileEnvelope(z,x,y),z)),
+  premvt_poi AS (
+    SELECT {{additional_name_columns}} *
+    FROM {{omt_func_pref}}_poi(ST_TileEnvelope(z,x,y),z)),
+  premvt_water AS (
+    SELECT * FROM {{omt_func_pref}}_water(ST_TileEnvelope(z,x,y))),
+  premvt_waterway AS (
+    SELECT {{additional_name_columns}} *
+    FROM {{omt_func_pref}}_waterway(ST_TileEnvelope(z,x,y),z)),
+  -- the generated {layer} and {layer}_name:
+  premvt_water_noname AS (
+    SELECT
+      id,class,intermittent,brunnel,geom
+    FROM premvt_water
+  ),
+  premvt_water_name AS (
+    SELECT
+      name,{{additional_name_columns}}
+      -- TODO: WARN! different from water_noname
+      intermittent,geom
+    FROM premvt_water WHERE name IS NOT NULL
+  ),
+  premvt_transportation_noname AS (
+    SELECT
+      {% if with_osm_id %} osm_id, {% endif %}
+      network,class,subclass,brunnel,oneway,ramp,service,
+      access,toll,expressway,cycleway,level,layer,indoor,bicycle,
+      foot,horse,mtb_scale,surface,
+      geom
+    FROM premvt_transportation
+  ),
+  premvt_transportation_name AS (
+    SELECT
+      {% if with_osm_id %} osm_id, {% endif %}
+      {{additional_name_columns}}
+      name,{{additional_name_columns}}
+      ref,length(ref) AS ref_length,
+      network,class,subclass,brunnel,level,layer,indoor,
+      geom
+    FROM premvt_transportation WHERE name IS NOT NULL
+  )
+SELECT string_agg(foo.mvt,''::bytea) FROM (
+  SELECT ST_AsMVT(premvt_aeroway,'aeroway') AS mvt
+    FROM premvt_aeroway UNION
+  SELECT ST_AsMVT(premvt_boundary,'boundary') AS mvt
+    FROM premvt_boundary UNION
+  SELECT ST_AsMVT(premvt_building,'building') AS mvt
+    FROM premvt_building UNION
+  SELECT ST_AsMVT(premvt_housenumber,'housenumber') AS mvt
+    FROM premvt_housenumber UNION
+  SELECT ST_AsMVT(premvt_landuse,'landuse') AS mvt
+    FROM premvt_landuse UNION
+  SELECT ST_AsMVT(premvt_landcover,'landcover') AS mvt
+    FROM premvt_landcover UNION
+  SELECT ST_AsMVT(premvt_park,'park') AS mvt
+    FROM premvt_park UNION
+  SELECT ST_AsMVT(premvt_place,'place') AS mvt
+    FROM premvt_place UNION
+  SELECT ST_AsMVT(premvt_poi,'poi') AS mvt
+    FROM premvt_poi UNION
+  SELECT ST_AsMVT(premvt_waterway,'waterway') AS mvt
+    FROM premvt_waterway UNION
+  SELECT ST_AsMVT(premvt_water_noname,'water') AS mvt
+    FROM premvt_water_noname UNION
+  SELECT ST_AsMVT(premvt_water_name,'water_name') AS mvt
+    FROM premvt_water_name UNION
+  SELECT ST_AsMVT(premvt_transportation_noname,'transportation') AS mvt
+    FROM premvt_transportation_noname UNION
+  SELECT ST_AsMVT(premvt_transportation_name,'transportation_name') AS mvt
+    FROM premvt_transportation_name
+) AS foo;
 $$
-LANGUAGE 'plpgsql'
-STABLE
-PARALLEL SAFE;
-
--- TODO: landuse or landcover, debug: where are vineyards and why are they not showing ?
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 SELECT length({{omt_all_func}}(16,34303,22938));

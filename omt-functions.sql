@@ -254,12 +254,12 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_point_admin_enclosing_rank(node
   -- BUT if the name is the same for that admin level, take ist rank (+0)
 AS $$
 WITH enclosing_area AS (
-  SELECT way_area,(SELECT {{point.name}} FROM {{point.table_name}}
-      WHERE {{point.osm_id}}=node_id)=name AS samename
-    FROM {{polygon.table_name}} WHERE {{polygon.boundary}}='administrative'
+  SELECT {{polygon.way_area}},(SELECT {{point.name}} FROM {{point.table_name}}
+      WHERE {{point.osm_id_v}}=node_id)=name AS samename
+    FROM {{polygon.table_name}} WHERE {{polygon.boundary_v}}='administrative'
       AND ST_Intersects(way,(SELECT {{point.way}} FROM {{point.table_name}}
-          WHERE {{point.osm_id}}=node_id))
-    ORDER BY(admin_level) DESC LIMIT 1)
+          WHERE {{point.osm_id_v}}=node_id))
+    ORDER BY({{polygon.admin_level_v}}) DESC LIMIT 1)
   SELECT CASE WHEN enclosing_area.samename=true THEN get_rank_by_area(way_area)
     ELSE
       get_rank_by_area(way_area)+1
@@ -300,10 +300,10 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aeroway(bounds_geom geometry)
 RETURNS setof {{omt_typ_pref}}_aeroway
 AS $$
-SELECT ref,aeroway AS class,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_polygon
-WHERE aeroway IS NOT NULL AND ST_Intersects(way,bounds_geom);
+SELECT {{polygon.ref}},{{polygon.aeroway_v}} AS class,
+  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+FROM {{polygon.table_name}}
+WHERE {{polygon.aeroway_v}} IS NOT NULL AND ST_Intersects({{polygon.way_v}},bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -397,16 +397,16 @@ SELECT admin_level::integer AS admin_level,
     COALESCE(tags->'ISO3166-1:alpha2',tags->'ISO3166-1',tags->'country_code_fips')
     ELSE NULL END) AS claimed_by,
   (CASE boundary WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
-  ST_AsMVTGeom({{line.way}},bounds_geom) AS geom
+  ST_AsMVTGeom({{line.way_v}},bounds_geom) AS geom
 FROM {{line.table_name}}
-WHERE ({{line.boundary}} IN ('administrative') OR CASE
-    WHEN z<=4 THEN {{line.boundary}} IN ('maritime')
-      AND {{line.admin_level}} IN ('1','2') ELSE false
+WHERE ({{line.boundary_v}} IN ('administrative') OR CASE
+    WHEN z<=4 THEN {{line.boundary_v}} IN ('maritime')
+      AND {{line.admin_level_v}} IN ('1','2') ELSE false
     END)
-   AND (z>=11 OR admin_level IN ('1','2','3','4','5','6','7'))
-   AND (z>=8 OR admin_level IN ('1','2','3','4'))
-   AND (z>=2 OR admin_level IN ('1','2','3'))
-   AND ST_Intersects(way,bounds_geom);
+   AND (z>=11 OR {{line.admin_level_v}} IN ('1','2','3','4','5','6','7'))
+   AND (z>=8 OR {{line.admin_level_v}} IN ('1','2','3','4'))
+   AND (z>=2 OR {{line.admin_level_v}} IN ('1','2','3'))
+   AND ST_Intersects({{line.way_v}},bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -631,18 +631,18 @@ RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
 SELECT name,waterway AS class,
   (CASE
-    WHEN bridge IS NOT NULL AND bridge!='no' THEN 'bridge'
-    WHEN tunnel IS NOT NULL AND tunnel!='no' THEN 'tunnel'
-    WHEN tags->'ford' IS NOT NULL AND (tags->'ford')!='no' THEN 'ford'
+    WHEN {{line.bridge_v}} IS NOT NULL AND {{line.bridge_v}}!='no' THEN 'bridge'
+    WHEN {{line.tunnel_v}} IS NOT NULL AND {{line.tunnel_v}}!='no' THEN 'tunnel'
+    WHEN {{line.ford_v}} IS NOT NULL AND {{line.ford_v}}!='no' THEN 'ford'
   END) AS brunnel,
   (CASE
-    WHEN {{line.intermittent}} IN ('yes') THEN 1
+    WHEN {{line.intermittent_v}} IN ('yes') THEN 1
     ELSE 0
   END) AS intermittent,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM {{line.table_name}}
-WHERE waterway IN ('stream','river','canal','drain','ditch')
-  AND ST_Intersects(way,bounds_geom);
+WHERE {{line.waterway_v}} IN ('stream','river','canal','drain','ditch')
+  AND ST_Intersects({{line.way_v}},bounds_geom);
     --TODO: by-zoom specificities
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -667,24 +667,23 @@ SELECT * FROM (
     ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
       WHEN tablefrom='polygon' THEN ST_Centroid(way) END),bounds_geom) AS geom
   FROM (
-    SELECT osm_id,
-      name,place,admin_level,tags,z_order,way,
-      way_area,'polygon' AS tablefrom
-    FROM planet_osm_polygon
-    WHERE place IN ('island')
+    SELECT {{polygon.osm_id}}, -- EVEN if without osm_id : for get_point_admin_enclosing
+      {{polygon.name}},{{polygon.place}},{{polygon.admin_level}},
+      {{polygon.tags}},{{polygon.way}},
+      {{polygon.way_area}},'polygon' AS tablefrom
+    FROM {{polygon.table_name}}
+    WHERE {{polygon.place_v}} IN ('island')
     UNION ALL
-    SELECT osm_id,
-      name,place,admin_level,tags,z_order,way,
-      {{omt_func_pref}}_get_point_admin_parent_area(osm_id) AS way_area,
+    SELECT {{point.osm_id}},
+      {{point.name}},{{point.place}},{{point.admin_level}},{{point.tags}},
+      {{point.way}},
+      {{omt_func_pref}}_get_point_admin_parent_area({{point.osm_id_v}}) AS way_area,
       'point' AS tablefrom
     FROM {{point.table_name}} 
-    WHERE place IN ('continent','country','state','province','city','town','village',
+    WHERE {{point.place_v}} IN ('continent','country','state','province','city','town','village',
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place
-    -- TODO: fix zürich affoltern not showing
-    -- TODO: does zürich city have multiple centroids ? maybe the polygon and the point are both showing...
-  -- distinguish tablefrom='point' -> WHERE place [only] IN ('island') ?
-    WHERE ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
+    WHERE ST_Intersects({{polygon.way_v}},bounds_geom)) AS unfiltered_zoom
   WHERE (z>=14) OR (12<=z AND z<14 AND rank<=8) OR (10<=z AND z<12 AND rank<=5) OR (10>z AND rank<=4);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -968,29 +967,29 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry)
 RETURNS setof {{omt_typ_pref}}_named_water
 AS $$
-SELECT name,osm_id AS id,
+SELECT {{polygon.name}},osm_id AS id, --TODO: move this to with_osm_id template arg ?
   (CASE
-    WHEN water IN ('river') THEN 'river'
-    WHEN waterway IN ('dock') THEN 'dock'
-    WHEN leisure IN ('swimming_pool') THEN 'swimming_pool'
+    WHEN {{polygon.water_v}} IN ('river') THEN 'river'
+    WHEN {{polygon.waterway_v}} IN ('dock') THEN 'dock'
+    WHEN {{polygon.leisure_v}} IN ('swimming_pool') THEN 'swimming_pool'
     ELSE 'lake'
   END) AS class,
   (CASE
-    WHEN intermittent IN ('yes') THEN 1
+    WHEN {{polygon.intermittent_v}} IN ('yes') THEN 1
     ELSE 0
   END) AS intermittent,
   (CASE
-    WHEN bridge IS NOT NULL AND bridge!='no' THEN 'bridge'
-    WHEN tunnel IS NOT NULL AND tunnel!='no' THEN 'tunnel'
-    WHEN tags->'ford' IS NOT NULL AND (tags->'ford')!='no' THEN 'ford'
+    WHEN {{polygon.bridge_v}} IS NOT NULL AND {{polygon.bridge_v}}!='no' THEN 'bridge'
+    WHEN {{polygon.tunnel_v}} IS NOT NULL AND {{polygon.tunnel_v}}!='no' THEN 'tunnel'
+    WHEN {{polygon.ford_v}} IS NOT NULL AND {{polygon.ford_v}}!='no' THEN 'ford'
   END) AS brunnel,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_polygon
-WHERE (covered IS NULL OR covered != 'yes') AND (
-    water IN ('river') OR waterway IN ('dock') OR leisure IN ('swimming_pool')
-    OR "natural" IN ('water','bay','spring') OR leisure IN ('swimming_pool')
-    OR landuse IN ('reservoir','basin','salt_pond'))
-  AND ST_Intersects(way,bounds_geom);
+  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+FROM {{polygon.table_name}}
+WHERE ({{polygon.covered_v}} IS NULL OR {{polygon.covered_v}} != 'yes') AND (
+    {{polygon.water_v}} IN ('river') OR {{polygon.waterway_v}} IN ('dock')
+    OR {{polygon.natural_v}} IN ('water','bay','spring') OR {{polygon.leisure_v}} IN ('swimming_pool')
+    OR {{polygon.landuse_v}} IN ('reservoir','basin','salt_pond'))
+  AND ST_Intersects({{polygon.way_v}},bounds_geom);
     --TODO: by-zoom specificities
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -998,7 +997,7 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_all_func}}(z integer, x integer, y integer)
 RETURNS bytea
 AS $$
--- ST_TileEnvelope should be cached:
+-- ST_TileEnvelope will be cached:
 -- SELECT pg_get_functiondef('st_tileenvelope'::regproc) ~ 'IMMUTABLE';
 WITH
   premvt_transportation AS (

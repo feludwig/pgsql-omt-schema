@@ -184,7 +184,7 @@ if __name__=='__main__' :
     })
     if len(sys.argv)>2 and sys.argv[2]=='--print' :
         print(sql_script)
-    if len(sys.argv)>2 and sys.argv[2]=='--index' :
+    elif len(sys.argv)>2 and sys.argv[2]=='--index' :
         parse_indexed_create(sql_script)
     else :
         try :

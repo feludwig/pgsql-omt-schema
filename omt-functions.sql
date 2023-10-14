@@ -292,17 +292,17 @@ WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','reside
   OR {{polygon.amenity_v}} IN ('bus_station','school','university','kindergarden','college',
       'library','hospital','grave_yard') OR {{polygon.waterway_v}} IN ('dam')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=14 OR {{polygon.way_area_v}}>1500) AND
-    (z>=13 OR {{polygon.way_area_v}}>6000) AND
-    (z>=12 OR {{polygon.way_area_v}}>24e3) AND
-    (z>=11 OR {{polygon.way_area_v}}>96e3) AND
-    (z>=10 OR {{polygon.way_area_v}}>384e3) AND
-    (z>=09 OR {{polygon.way_area_v}}>1536e3) AND
-    (z>=08 OR {{polygon.way_area_v}}>6e6) AND
-    (z>=07 OR {{polygon.way_area_v}}>24e6) AND
-    (z>=06 OR {{polygon.way_area_v}}>96e6) AND
-    (z>=05 OR {{polygon.way_area_v}}>384e6) AND
-    (z>=04 OR {{polygon.way_area_v}}>1526e6)
+    (z>=14 AND {{polygon.way_area_v}}>1500) OR
+    (z>=13 AND {{polygon.way_area_v}}>6000) OR
+    (z>=12 AND {{polygon.way_area_v}}>24e3) OR
+    (z>=11 AND {{polygon.way_area_v}}>96e3) OR
+    (z>=10 AND {{polygon.way_area_v}}>384e3) OR
+    (z>=09 AND {{polygon.way_area_v}}>1536e3) OR
+    (z>=08 AND {{polygon.way_area_v}}>6e6) OR
+    (z>=07 AND {{polygon.way_area_v}}>24e6) OR
+    (z>=06 AND {{polygon.way_area_v}}>96e6) OR
+    (z>=05 AND {{polygon.way_area_v}}>384e6) OR
+    (z>=04 AND {{polygon.way_area_v}}>1536e6)
   );
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -410,17 +410,17 @@ SELECT
   OR leisure IN ('park','garden','golf_course')
   OR wetland IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
   ) AND ST_Intersects(way,bounds_geom) AND (
-    (z>=14 OR {{polygon.way_area_v}}>1500) AND
-    (z>=13 OR {{polygon.way_area_v}}>6000) AND
-    (z>=12 OR {{polygon.way_area_v}}>24e3) AND
-    (z>=11 OR {{polygon.way_area_v}}>96e3) AND
-    (z>=10 OR {{polygon.way_area_v}}>384e3) AND
-    (z>=09 OR {{polygon.way_area_v}}>1536e3) AND
-    (z>=08 OR {{polygon.way_area_v}}>6e6) AND
-    (z>=07 OR {{polygon.way_area_v}}>24e6) AND
-    (z>=06 OR {{polygon.way_area_v}}>96e6) AND
-    (z>=05 OR {{polygon.way_area_v}}>384e6) AND
-    (z>=04 OR {{polygon.way_area_v}}>1526e6)
+    (z>=14 AND {{polygon.way_area_v}}>1500) OR
+    (z>=13 AND {{polygon.way_area_v}}>6000) OR
+    (z>=12 AND {{polygon.way_area_v}}>24e3) OR
+    (z>=11 AND {{polygon.way_area_v}}>96e3) OR
+    (z>=10 AND {{polygon.way_area_v}}>384e3) OR
+    (z>=09 AND {{polygon.way_area_v}}>1536e3) OR
+    (z>=08 AND {{polygon.way_area_v}}>6e6) OR
+    (z>=07 AND {{polygon.way_area_v}}>24e6) OR
+    (z>=06 AND {{polygon.way_area_v}}>96e6) OR
+    (z>=05 AND {{polygon.way_area_v}}>384e6) OR
+    (z>=04 AND {{polygon.way_area_v}}>1536e6)
   )) AS foo;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -438,7 +438,8 @@ SELECT {{omt_func_pref}}_text_to_real_0(tags->'height') AS render_height,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM planet_osm_polygon
 WHERE building IS NOT NULL AND (tags->'location' != 'underground' OR tags->'location' IS NULL)
-   AND ST_Intersects(way,bounds_geom) AND (
+  AND ST_Intersects(way,bounds_geom)
+  AND (
     (z>=14 OR way_area>=1700) AND (z>12) -- show no buildings above z>=12
   );
 $$
@@ -508,10 +509,9 @@ SELECT admin_level::integer AS admin_level,
   (CASE boundary WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
   ST_AsMVTGeom({{line.way_v}},bounds_geom) AS geom
 FROM {{line.table_name}}
-WHERE ({{line.boundary_v}} IN ('administrative') OR CASE
-    WHEN z<=4 THEN {{line.boundary_v}} IN ('maritime')
-      AND {{line.admin_level_v}} IN ('1','2') ELSE false
-    END)
+WHERE ({{line.boundary_v}} IN ('administrative')
+    OR (z<=4 AND ({{line.boundary_v}} IN ('maritime')
+      AND {{line.admin_level_v}} IN ('1','2'))))
    AND (z>=11 OR {{line.admin_level_v}} IN ('1','2','3','4','5','6','7'))
    AND (z>=8 OR {{line.admin_level_v}} IN ('1','2','3','4'))
    AND (z>=2 OR {{line.admin_level_v}} IN ('1','2','3'))
@@ -647,9 +647,9 @@ SELECT * FROM (
   WHERE (
     {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
       'monorail','tram')
-    OR {{line.highway_v}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
+    OR ({{line.highway_v}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
       'pedestrian','bridleway','corridor','service','track','raceway','busway',
-      'bus_guideway','construction')
+      'bus_guideway','construction') AND z>=14)
     OR ({{line.highway_v}} IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
     OR ({{line.highway_v}} IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
     OR ({{line.highway_v}} IN ('tertiary','tertiary_link','road') AND z>=11)

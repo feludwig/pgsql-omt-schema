@@ -5,6 +5,7 @@ import psycopg2
 import sqlglot
 import sqlglot.optimizer
 import argparse
+import datetime
 import typing
 import uuid
 import re
@@ -162,16 +163,18 @@ def remove_z_var(s_where:s_where_t)->typing.Collection[typing.Dict[str,s_where_t
                     p_repr=n.sql().split(' ')
                     if p_repr[0][:2]=='z_' :
                         p_repr[0]='z'
+                        p_repr[1]={'=':'eq','<':'lt','<=':'lte','>':'gt','>=':'gte'}[p_repr[1]]
                     elif p_repr[2][:2]=='z_' :
                         p_repr[2]='z'
-                    p_repr[1]={'=':'eq','<':'lt','<=':'lte','>':'gt','>=':'gte'}[p_repr[1]]
+                        p_repr[1]={'=':'eq','>':'lt','>=':'lte','<':'gt','<=':'gte'}[p_repr[1]]
                     one_result['parent']='_'.join(p_repr)
                     return sqlglot.expressions.TRUE
                 for other_id_z in all_zs :
                     if id_z!=other_id_z and other_id_z in sub_ids :
                         return sqlglot.expressions.FALSE
             return n
-        one_result['s']=sqlglot.optimizer.simplify.simplify(s_where_with_uuids.transform(trsf,copy=True))
+        one_result['s']=s_where_with_uuids.transform(trsf,copy=True)
+        one_result['s']=sqlglot.optimizer.simplify.simplify(one_result['s'])
         result.append(one_result)
     return result
 
@@ -184,10 +187,13 @@ def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing
             continue
         func_name=match.group('funcname')
         func_body_str=match.group('funcbody')
-        if func_body_str.lower().find('st_asmvt(')>=0 or func_name=='omt_all':
+        if ( func_body_str.lower().find('st_asmvt(')>=0 or func_name=='omt_all'
+                or func_body_str.find('&&')>=0 or func_name.find('_get_')>=0 ) :
+            # '&&' operator unsupported in sqlglot
+            # _get_ remove: filter out utils functions
             continue
 
-        s_func_body=sqlglot.parse_one(func_body_str.replace('&&','=='),dialect='postgres')
+        s_func_body=sqlglot.parse_one(func_body_str,dialect='postgres')
         #print('BLOCK START')
         #print(s_func_body)
         #print('BLOCK END')
@@ -209,20 +215,60 @@ def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing
                 # s_where references some data that should not be indexed:
                 s_where=remove_way_var(s_where.copy())
                 s_wheres=remove_z_var(s_where)
+                def assemble_dict(where_sql:str,z:bool,parent:str) :
+                    r={'func':func_name,'table':t_name,
+                        'where':where_sql,
+                        'geom':'way'}
+                    r['name']='idx_'+r['func'].split('.')[-1]+'_'+t_s
+                    if z :
+                        r['name']=r['name']+'_'+parent
+                    return r
+
                 if len(s_wheres)!=0 :
                     for o_r in s_wheres :
-                        yield {'func':func_name,'table':t_name,'tableshort':t_s,'where':o_r['s'].sql(),'z':True,'parent':o_r['parent'],'geom':'way'}
+                        rslt=o_r['s'].sql(dialect='postgres')
+                        if rslt=='WHERE FALSE' :
+                            #simplified to the point of nothing left
+                            continue
+                        yield assemble_dict(rslt,True,o_r['parent'])
                 else :
-                    yield {'func':func_name,'table':t_name,'tableshort':t_s,'where':s_where.sql(),'z':False,'geom':'way'}
+                    yield assemble_dict(s_where.sql(dialect='postgres'),False,None)
 
 def sql_index_command(data:typing.Dict[str,str],operation:str)->str :
-    index_name='idx_'+data['func'].split('.')[-1]+'_'+data['tableshort']
-    if data['z'] :
-        index_name=index_name+'_'+data['parent']
     if operation=='create' :
-        return f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {data['table']} USING GIST({data['geom']}) {data['where']}"
+        return f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {data['name']} ON {data['table']} USING GIST({data['geom']}) {data['where']}"
     elif operation=='drop' :
-        return f"DROP INDEX IF EXISTS {index_name}"
+        return f"DROP INDEX IF EXISTS {data['name']}"
+
+def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,command:str) :
+    ''' Parse out indexes that could be useful from the compiled template sql_script.
+    command: create -> CREATE INDEX IF NOT EXISTS
+    command: drop -> DROP INDEX
+    command: names -> return the index names as a list, do nothing else
+    '''
+    names=[]
+    notices=[]
+    start=datetime.datetime.now()
+    for d in parse_indexed_create(sql_script) :
+        start_one=datetime.datetime.now()
+        if command=='names' :
+            names.append(d['name'])
+            continue
+        print(len(d['where']),d['name'])
+        try :
+            c.execute(sql_index_command(d,command))
+        except psycopg2.Error as err :
+            print(sql_index_command(d,command))
+            raise err
+        for i in access.notices :
+            if i not in notices :
+                print(i)
+                notices.append(i)
+        print(command,d['name'],'in',(datetime.datetime.now()-start_one))
+    if command=='names' :
+        return names
+    print(command,'all in',(datetime.datetime.now()-start))
+    print(datetime.datetime.now(),'finished')
 
 
 if __name__=='__main__' :
@@ -255,8 +301,21 @@ if __name__=='__main__' :
     if len(sys.argv)>2 and sys.argv[2]=='--print' :
         print(sql_script)
     elif len(sys.argv)>2 and sys.argv[2]=='--index' :
+        access.commit()
+        # WARN: enable transaction-less CREATE INDEX;
+        access.autocommit=True
+        run_sql_indexes(c,sql_script,'create')
+    elif len(sys.argv)>2 and sys.argv[2]=='--index-drop' :
+        access.commit()
+        # WARN: enable transaction-less CREATE INDEX;
+        access.autocommit=True
+        run_sql_indexes(c,sql_script,'drop')
+    elif len(sys.argv)>2 and sys.argv[2]=='--index-print' :
         for d in parse_indexed_create(sql_script) :
-            print(sql_index_command(d,'create'),end='\n\n')
+            print(sql_index_command(d,'create'))
+    elif len(sys.argv)>2 and sys.argv[2]=='--index-names' :
+        for n in run_sql_indexes(c,sql_script,'names') :
+            print(n)
     else :
         try :
             c.execute(sql_script)

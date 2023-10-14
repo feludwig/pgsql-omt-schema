@@ -11,7 +11,7 @@
 --    -> {point.table_name} in a FROM {},
 --    -> {point.<column_name>} in a SELECT foo, {} FROM ...
 --        this becomes "(tags->'col') AS col" when col was not detected in db, and "col" otherwise
---    -> {point.<column_name>_v} in a SELECT ({}+1) AS computed_value [v for value]
+--    -> {point.<column_name>_v} in a SELECT ({}+1) AS computed_value [v for "value"]
 --        this becomes "(tags->'col')" when col was not detected, and "col" otherwise
 --  {line} the table storing all line features, default osm2pgsql name planet_osm_line
 --    -> exaclty like {point}, there is a {line.table_name} and
@@ -19,6 +19,8 @@
 --  {polygon} the table storing all line features, default osm2pgsql name planet_osm_polygon
 --    -> exaclty like {point}, there is a {polygon.table_name} and
 --    -> {polygon.<column_name>} and {polygon.<column_name>_v}
+--  ALSO: any column name {point.<colname>_ne} ["not exists"] is a shorthand for
+--    ({point.<colname>_v} is null), which gets contracted to "tags"?<colname> in case of tags
 
 
 -- TODO: 
@@ -78,8 +80,8 @@ CREATE TYPE {{omt_typ_pref}}_named_transportation AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_aerodrome_label AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   name text,
-  --TODO: name_en ?
   class text,
   iata text,
   icao text,
@@ -89,6 +91,7 @@ CREATE TYPE {{omt_typ_pref}}_aerodrome_label AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_aeroway AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   ref text,
   class text,
   geom geometry
@@ -130,10 +133,10 @@ CREATE TYPE {{omt_typ_pref}}_landuse AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_mountain_peak AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   name text,
-  -- TODO: name_en, name_de ?
   class text,
-  ele integer, -- TODO: maybe real ?
+  ele integer,
   -- not to do: ele_ft, customary_fr
   rank integer,
   geom geometry
@@ -141,7 +144,6 @@ CREATE TYPE {{omt_typ_pref}}_mountain_peak AS (
 
 CREATE TYPE {{omt_typ_pref}}_park AS (
   name text,
-  --TODO: name_en ?
   class text,
   rank integer,
   geom geometry
@@ -151,7 +153,6 @@ CREATE TYPE {{omt_typ_pref}}_place AS (
 {% if with_osm_id %} osm_id text, {% endif %}
 {% if debug %} way_area real, {% endif %}
   name text,
-  --TODO: name_en ?
   capital integer,
   class text,
   iso_a2 text,
@@ -162,7 +163,6 @@ CREATE TYPE {{omt_typ_pref}}_place AS (
 CREATE TYPE {{omt_typ_pref}}_poi AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
-  -- TODO: name_en ?
   class text,
   subclass text,
   rank integer,
@@ -175,7 +175,6 @@ CREATE TYPE {{omt_typ_pref}}_poi AS (
 
 CREATE TYPE {{omt_typ_pref}}_named_water AS (
   name text,
-  --TODO: name_en ?
   id bigint,
   class text,
   intermittent integer,
@@ -185,7 +184,6 @@ CREATE TYPE {{omt_typ_pref}}_named_water AS (
 
 CREATE TYPE {{omt_typ_pref}}_waterway AS (
   name text,
-  --TODO: name_en ?
   class text,
   brunnel text, -- TODO: only two-value possible
   intermittent integer,
@@ -265,8 +263,11 @@ WITH enclosing_area AS (
       get_rank_by_area(way_area)+1
     END FROM enclosing_area;
 $$
-
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+
+
+
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landuse(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_landuse
 AS $$
@@ -291,19 +292,84 @@ WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','reside
   OR {{polygon.amenity_v}} IN ('bus_station','school','university','kindergarden','college',
       'library','hospital','grave_yard') OR {{polygon.waterway_v}} IN ('dam')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=14 OR {{polygon.way_area_v}}>1500)
-    AND (z>=11 OR {{polygon.way_area_v}}>8000)
+    (z>=14 OR {{polygon.way_area_v}}>1500) AND
+    (z>=13 OR {{polygon.way_area_v}}>6000) AND
+    (z>=12 OR {{polygon.way_area_v}}>24e3) AND
+    (z>=11 OR {{polygon.way_area_v}}>96e3) AND
+    (z>=10 OR {{polygon.way_area_v}}>384e3) AND
+    (z>=09 OR {{polygon.way_area_v}}>1536e3) AND
+    (z>=08 OR {{polygon.way_area_v}}>6e6) AND
+    (z>=07 OR {{polygon.way_area_v}}>24e6) AND
+    (z>=06 OR {{polygon.way_area_v}}>96e6) AND
+    (z>=05 OR {{polygon.way_area_v}}>384e6) AND
+    (z>=04 OR {{polygon.way_area_v}}>1526e6)
   );
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aerodrome_label(bounds_geom geometry)
+RETURNS setof {{omt_typ_pref}}_aerodrome_label
+AS $$
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+    name,
+    (CASE WHEN aerodrome_type IN ('international','public','regional','miltary','private','other')
+      THEN aerodrome_type
+      ELSE 'other' -- remove any NULLs
+    END) AS class,
+    iata,icao,{{omt_func_pref}}_text_to_int_null(ele) AS ele,
+  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+FROM (
+  SELECT
+{% if with_osm_id %} ('n'||osm_id) AS osm_id, {% endif %}
+    {{point.name}},{{point.aeroway_v}},{{point.aerodrome_type}},
+    {{point.iata}},{{point.icao}},{{point.ele}},{{point.way}}
+  FROM {{point.table_name}}
+  UNION ALL
+  SELECT
+{% if with_osm_id %}
+    (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
+    {{polygon.name}},{{polygon.aeroway_v}},{{polygon.aerodrome_type}},
+    {{polygon.iata}},{{polygon.icao}},{{polygon.ele}},{{polygon.way}}
+  FROM {{polygon.table_name}}
+) AS foo
+WHERE aeroway='aerodrome' AND ST_Intersects(way,bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aeroway(bounds_geom geometry)
 RETURNS setof {{omt_typ_pref}}_aeroway
 AS $$
-SELECT {{polygon.ref}},{{polygon.aeroway_v}} AS class,
-  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
-FROM {{polygon.table_name}}
-WHERE {{polygon.aeroway_v}} IS NOT NULL AND ST_Intersects({{polygon.way_v}},bounds_geom);
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  ref,class,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+FROM (
+  SELECT
+{% if with_osm_id %} ('n'||osm_id) AS osm_id, {% endif %}
+    {{point.ref}},{{point.aeroway_v}} AS class,{{point.way}}
+  FROM {{point.table_name}}
+  WHERE {{point.aeroway_v}} IN ('gate')
+  UNION ALL
+  SELECT
+{% if with_osm_id %}
+  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
+    {{line.ref}},{{line.aeroway_v}} AS class,{{line.way}}
+  FROM {{line.table_name}}
+  WHERE {{line.aeroway_v}} IN ('runway','taxiway')
+  UNION ALL
+  SELECT
+{% if with_osm_id %}
+  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
+    {{polygon.ref}},{{polygon.aeroway_v}} AS class,{{polygon.way}}
+  FROM {{polygon.table_name}}
+  WHERE {{polygon.aeroway_v}} IN ('aerodrome','heliport','runway','helipad','taxiway','apron')
+    ) AS foo
+WHERE ST_Intersects({{polygon.way_v}},bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -344,8 +410,17 @@ SELECT
   OR leisure IN ('park','garden','golf_course')
   OR wetland IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
   ) AND ST_Intersects(way,bounds_geom) AND (
-    (z>=14 OR way_area>1500) AND
-    (z>=12 OR way_area>8000)
+    (z>=14 OR {{polygon.way_area_v}}>1500) AND
+    (z>=13 OR {{polygon.way_area_v}}>6000) AND
+    (z>=12 OR {{polygon.way_area_v}}>24e3) AND
+    (z>=11 OR {{polygon.way_area_v}}>96e3) AND
+    (z>=10 OR {{polygon.way_area_v}}>384e3) AND
+    (z>=09 OR {{polygon.way_area_v}}>1536e3) AND
+    (z>=08 OR {{polygon.way_area_v}}>6e6) AND
+    (z>=07 OR {{polygon.way_area_v}}>24e6) AND
+    (z>=06 OR {{polygon.way_area_v}}>96e6) AND
+    (z>=05 OR {{polygon.way_area_v}}>384e6) AND
+    (z>=04 OR {{polygon.way_area_v}}>1526e6)
   )) AS foo;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -383,6 +458,40 @@ SELECT name,
 FROM planet_osm_polygon
 WHERE (boundary IN ('national_park','protected_area') OR leisure='nature_reserve')
    AND ST_Intersects(way,bounds_geom);
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_mountain_peak(bounds_geom geometry)
+RETURNS setof {{omt_typ_pref}}_mountain_peak
+AS $$
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  name,class,{{omt_func_pref}}_text_to_int_null(ele) AS ele,
+  (row_number() OVER (ORDER BY ((name IS NULL)::int+score) ASC))::int AS rank,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+FROM (
+  SELECT
+{% if with_osm_id %} ('n'||osm_id) AS osm_id, {% endif %}
+    {{point.name}},{{point.ele}},{{point.way}},
+    -- score of 0 means popular item: should be shown first
+    ({{point.wikipedia_ne}}::int+{{point.wikidata_ne}}::int) AS score,
+    {{point.natural_v}} AS class
+  FROM {{point.table_name}}
+  WHERE {{point.natural_v}} IN ('peak','volcano','saddle')
+  UNION ALL
+  SELECT
+{% if with_osm_id %}
+  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
+    {{line.name}},{{line.ele}},{{line.way}},
+    -- score of 0 means popular item: should be shown first
+    ({{line.wikipedia_ne}}::int+{{line.wikidata_ne}}::int) AS score,
+    {{line.natural_v}} AS class
+  FROM {{line.table_name}}
+  WHERE {{line.natural_v}} IN ('ridge','cliff','arete')
+    ) AS foo
+WHERE ST_Intersects(way,bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -533,6 +642,7 @@ SELECT * FROM (
         'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
     END) AS surface,
     ST_AsMVTGeom({{line.way_v}},bounds_geom) AS geom
+    -- TODO: should we use planet_osm_roads ? and planet_osm_polygon nad planet_osm_point ? INCOMPLETE!
   FROM {{line.table_name}}
   WHERE (
     {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
@@ -546,7 +656,7 @@ SELECT * FROM (
     OR ({{line.highway_v}} IN ('secondary','secondary_link') AND z>=9)
     OR aerialway IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
       'j-bar','mixed_lift')
-    OR route IN ('bicycle') --NOTE:extension
+    OR {{line.route_v}} IN ('bicycle') --NOTE:extension
   ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
 WHERE (z>=14) OR (12<=z AND z<14 AND class NOT IN ('path')) OR
   (10<=z AND z<12 AND class NOT IN ('minor')) OR (z<10 AND class IN ('primary','bicycle_route') AND
@@ -565,9 +675,11 @@ AS $$
 -- roads are not shown anyways, nor bridges etc...
 SELECT
 {% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
-  NULL AS name, -- transportation_name is then empty
-  ref,class,(array_agg(subclass))[1] AS subclass,
-  (array_agg(network))[1] AS network,(array_agg(brunnel))[1] AS brunnel,
+  (array_agg(name))[1] AS name,
+  (CASE WHEN (z<12 AND class='primary') OR (z<13 AND class IN ('primary','secondary')) THEN ref
+    ELSE NULL
+  END) AS ref,class,(array_agg(subclass))[1] AS subclass,
+  (array_agg(network))[1] AS network,brunnel,
   (array_agg(oneway))[1] AS oneway,min(ramp) AS ramp,
   (array_agg(service))[1] AS service,
   (array_agg(access))[1] AS access,max(toll) AS toll,
@@ -578,7 +690,7 @@ SELECT
   (array_agg(mtb_scale))[1] AS mtb_scale,(array_agg(surface))[1] AS surface,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
-GROUP BY(class,ref,layer);
+GROUP BY(class,ref,brunnel,layer);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1000,8 +1112,9 @@ AS $$
 -- ST_TileEnvelope will be cached:
 -- SELECT pg_get_functiondef('st_tileenvelope'::regproc) ~ 'IMMUTABLE';
 WITH
-  premvt_transportation AS (
-    SELECT * FROM {{omt_func_pref}}_transportation(ST_TileEnvelope(z,x,y),z)),
+  premvt_aerodrome_label AS(
+    SELECT {{additional_name_columns}} *
+    FROM {{omt_func_pref}}_aerodrome_label(ST_TileEnvelope(z,x,y))),
   premvt_aeroway AS(
     SELECT * FROM {{omt_func_pref}}_aeroway(ST_TileEnvelope(z,x,y))),
   premvt_boundary AS (
@@ -1010,10 +1123,13 @@ WITH
     SELECT * FROM {{omt_func_pref}}_building(ST_TileEnvelope(z,x,y),z)),
   premvt_housenumber AS (
     SELECT * FROM {{omt_func_pref}}_housenumber(ST_TileEnvelope(z,x,y))),
-  premvt_landuse AS (
-    SELECT * FROM {{omt_func_pref}}_landuse(ST_TileEnvelope(z,x,y),z)),
   premvt_landcover AS (
     SELECT * FROM {{omt_func_pref}}_landcover(ST_TileEnvelope(z,x,y),z)),
+  premvt_landuse AS (
+    SELECT * FROM {{omt_func_pref}}_landuse(ST_TileEnvelope(z,x,y),z)),
+  premvt_mountain_peak AS (
+    SELECT {{additional_name_columns}} *
+    FROM {{omt_func_pref}}_mountain_peak(ST_TileEnvelope(z,x,y))),
   premvt_park AS (
     SELECT {{additional_name_columns}} *
     FROM {{omt_func_pref}}_park(ST_TileEnvelope(z,x,y))),
@@ -1023,13 +1139,18 @@ WITH
     FROM {{omt_func_pref}}_place(ST_TileEnvelope(z,x,y),z)),
   premvt_poi AS (
     SELECT {{additional_name_columns}} *
-    FROM {{omt_func_pref}}_poi(ST_TileEnvelope(z,x,y),z)),
-  premvt_water AS (
-    SELECT * FROM {{omt_func_pref}}_water(ST_TileEnvelope(z,x,y))),
+    FROM {{omt_func_pref}}_poi(ST_TileEnvelope(z,x,y),z)
+    ORDER BY(rank) ASC
+    LIMIT CASE WHEN z<12 THEN 100 ELSE 10000 END
+  ),
   premvt_waterway AS (
     SELECT {{additional_name_columns}} *
     FROM {{omt_func_pref}}_waterway(ST_TileEnvelope(z,x,y),z)),
   -- the generated {layer} and {layer}_name:
+  premvt_water AS (
+    SELECT * FROM {{omt_func_pref}}_water(ST_TileEnvelope(z,x,y))),
+  premvt_transportation AS (
+    SELECT * FROM {{omt_func_pref}}_transportation(ST_TileEnvelope(z,x,y),z)),
   premvt_water_noname AS (
     SELECT
       id,class,intermittent,brunnel,geom
@@ -1062,6 +1183,8 @@ WITH
     FROM premvt_transportation WHERE name IS NOT NULL
   )
 SELECT string_agg(foo.mvt,''::bytea) FROM (
+  SELECT ST_AsMVT(premvt_aerodrome_label,'aerodrome_label') AS mvt
+    FROM premvt_aerodrome_label UNION
   SELECT ST_AsMVT(premvt_aeroway,'aeroway') AS mvt
     FROM premvt_aeroway UNION
   SELECT ST_AsMVT(premvt_boundary,'boundary') AS mvt
@@ -1070,26 +1193,28 @@ SELECT string_agg(foo.mvt,''::bytea) FROM (
     FROM premvt_building UNION
   SELECT ST_AsMVT(premvt_housenumber,'housenumber') AS mvt
     FROM premvt_housenumber UNION
-  SELECT ST_AsMVT(premvt_landuse,'landuse') AS mvt
-    FROM premvt_landuse UNION
   SELECT ST_AsMVT(premvt_landcover,'landcover') AS mvt
     FROM premvt_landcover UNION
+  SELECT ST_AsMVT(premvt_landuse,'landuse') AS mvt
+    FROM premvt_landuse UNION
+  SELECT ST_AsMVT(premvt_mountain_peak,'mountain_peak') AS mvt
+    FROM premvt_mountain_peak UNION
   SELECT ST_AsMVT(premvt_park,'park') AS mvt
     FROM premvt_park UNION
   SELECT ST_AsMVT(premvt_place,'place') AS mvt
     FROM premvt_place UNION
   SELECT ST_AsMVT(premvt_poi,'poi') AS mvt
     FROM premvt_poi UNION
-  SELECT ST_AsMVT(premvt_waterway,'waterway') AS mvt
-    FROM premvt_waterway UNION
+  SELECT ST_AsMVT(premvt_transportation_noname,'transportation') AS mvt
+    FROM premvt_transportation_noname UNION
+  SELECT ST_AsMVT(premvt_transportation_name,'transportation_name') AS mvt
+    FROM premvt_transportation_name UNION
   SELECT ST_AsMVT(premvt_water_noname,'water') AS mvt
     FROM premvt_water_noname UNION
   SELECT ST_AsMVT(premvt_water_name,'water_name') AS mvt
     FROM premvt_water_name UNION
-  SELECT ST_AsMVT(premvt_transportation_noname,'transportation') AS mvt
-    FROM premvt_transportation_noname UNION
-  SELECT ST_AsMVT(premvt_transportation_name,'transportation_name') AS mvt
-    FROM premvt_transportation_name
+  SELECT ST_AsMVT(premvt_waterway,'waterway') AS mvt
+    FROM premvt_waterway
 ) AS foo;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;

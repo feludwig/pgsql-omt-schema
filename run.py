@@ -6,6 +6,7 @@ import sqlglot
 import sqlglot.optimizer
 import argparse
 import typing
+import uuid
 import re
 import os
 
@@ -25,10 +26,12 @@ class GeoTable() :
             if colname in need_columns :
                 self.__dict__[colname]=f'"{self.aliased(colname)}" AS {colname}'
                 self.__dict__[colname+'_v']=f'"{self.aliased(colname)}"'
+                self.__dict__[colname+'_ne']=f'("{self.aliased(colname)}" IS NULL)'
         for colname in need_columns :
             if colname not in self.__dict__ :
-                self.__dict__[colname]='("'+tags_column+'"'+f"->'{colname}') AS {colname}"
-                self.__dict__[colname+'_v']='("'+tags_column+'"'+f"->'{colname}')"
+                self.__dict__[colname]='("'+tags_column+'"'+f"->'{self.aliased(colname)}') AS {colname}"
+                self.__dict__[colname+'_v']='("'+tags_column+'"'+f"->'{self.aliased(colname)}')"
+                self.__dict__[colname+'_ne']='("'+tags_column+'"'+f"?'{self.aliased(colname)}')"
 
         c.execute(c.mogrify('''SELECT 
             (SELECT nspname FROM pg_namespace WHERE oid=relnamespace),relname
@@ -67,11 +70,13 @@ def make_global_dict(c:psycopg2.extensions.cursor,
 aliases={
     'point':{
         'housenumber':'addr:housenumber',
+        'aerodrome_type':'aerodrome:type',
     },
     'line':{
         'mtb_scale':'mtb:scale',
     },
     'polygon':{
+        'aerodrome_type':'aerodrome:type',
     },
 }
 
@@ -81,7 +86,9 @@ need_columns={
         'level', 'railway', 'sport', 'office', 'tourism',
         'landuse', 'barrier', 'amenity', 'admin_level',
         'waterway', 'building', 'shop', 'highway',
-        'leisure', 'historic', 'indoor', 
+        'leisure', 'historic', 'indoor', 'aerodrome_type',
+        'aeroway', 'iata', 'icao', 'wikipedia', 'wikidata',
+        'ele', 'natural', 'ref',
 
         'way', 'tags', 'osm_id',
     ),
@@ -89,7 +96,8 @@ need_columns={
         'amenity', 'bicycle', 'foot', 'horse', 'surface',
         'mtb_scale', 'boundary', 'admin_level', 'highway',
         'railway', 'intermittent', 'bridge', 'tunnel', 'ford',
-        'waterway',
+        'waterway', 'wikipedia', 'wikidata', 'name', 'ele',
+        'natural', 'route', 'ref', 'aeroway',
 
         'way', 'tags', 'osm_id',
     ),
@@ -100,60 +108,122 @@ need_columns={
         'highway', 'leisure', 'historic', 'level', 'place',
         'admin_level', 'bridge', 'tunnel', 'ford',
         'water', 'intermittent', 'natural', 'covered',
-        'ref','aeroway',
+        'ref','aeroway', 'aerodrome_type', 'iata', 'icao',
+        'ele',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),
 }
 
-def parse_indexed_create(sql_script:str) :
+#type var
+s_where_t=sqlglot.expressions.Where
+
+def remove_way_var(s_where:s_where_t)->typing.Optional[s_where_t] :
+    #   * remove ... AND ST_intersects(way...)
+    #       -> and replace with AND TRUE -> and simplify away
+    s_intersects=[i for i in s_where.find_all(sqlglot.expressions.Anonymous) if i.name.lower()=='st_intersects']
+    if len(s_intersects)==0 :
+        #print('NO way to index over FOUND'), not very important: probably part of a subquery
+        return sqlglot.optimizer.simplify.simplify(s_where)
+    s_intersects[0].replace(sqlglot.expressions.TRUE)
+    return sqlglot.optimizer.simplify.simplify(s_where)
+
+def remove_z_var(s_where:s_where_t)->typing.Collection[typing.Dict[str,s_where_t]] :
+    ''' Will return a list of the multiplied WHERE along possible z-conditions
+    '''
+    #   * still need to remove z dependency:
+    # [...] OR ("way_area" > 1500 AND z >= 14) OR ("way_area" > 8000 AND z >= 11)
+    # -> (1) [...] OR ("way_area" > 1500 AND [TRUE]) OR <--REMOVE:("way_area" > 8000 AND z >= 11)-->
+    # -> (2) [...] OR <--REMOVE:("way_area" > 1500 AND z>=14)--> OR ("way_area" > 8000 AND [TRUE])
+    # as in: for every AND that contains any z references :
+    # replace the z reference with a TRUE and remove all other z-referencing ANDs,
+    # then sqlglot.simplify() that and make multiple indexes.
+
+    # add comments to sql that e.g way_area should have BETWEEN constraints explicitly
+    # where z-implied
+
+    result=[]
+
+    s_where_with_uuids=s_where.copy()
+    # sqlglot will say Identifier('z') == Identifier('z') but we don't want that!
+    # make these unique wrt eachother
+    for id_obj in s_where_with_uuids.find_all(sqlglot.expressions.Identifier) :
+        if id_obj.name=='z' :
+            id_obj.replace(sqlglot.parse_one('z_'+str(uuid.uuid1()).replace('-','_')))
+    all_zs=[ident for ident in s_where_with_uuids.find_all(sqlglot.expressions.Identifier) if ident.name[:2]=='z_']
+
+    for id_z in all_zs :
+        one_result={}
+        def trsf(n) :
+            if n.key in ('gt','lt','gte','lte','eq') :
+                sub_ids=[i for i in n.left.find_all(sqlglot.expressions.Identifier)]
+                sub_ids.extend([i for i in n.right.find_all(sqlglot.expressions.Identifier)])
+                if id_z in sub_ids :
+                    p_repr=n.sql().split(' ')
+                    if p_repr[0][:2]=='z_' :
+                        p_repr[0]='z'
+                    elif p_repr[2][:2]=='z_' :
+                        p_repr[2]='z'
+                    p_repr[1]={'=':'eq','<':'lt','<=':'lte','>':'gt','>=':'gte'}[p_repr[1]]
+                    one_result['parent']='_'.join(p_repr)
+                    return sqlglot.expressions.TRUE
+                for other_id_z in all_zs :
+                    if id_z!=other_id_z and other_id_z in sub_ids :
+                        return sqlglot.expressions.FALSE
+            return n
+        one_result['s']=sqlglot.optimizer.simplify.simplify(s_where_with_uuids.transform(trsf,copy=True))
+        result.append(one_result)
+    return result
+
+def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing.Any]] :
     uncommented=[i if i.find('--')<0 else i[:i.index('--')] for i in sql_script.split('\n')]
     collapsed_newlines=' '.join(uncommented)
-    for match in re.finditer(r'FUNCTION\s+(?P<funcname>[^\(]+)(?P<functypedef>[^\$]+)\s+AS\s+\$\$(?P<funcbody>[^\$]+)\$\$[^\$]*LANGUAGE\s+(?P<funclang>[^\s]+)\s',collapsed_newlines) :
+    regex_get_funcs=r'FUNCTION\s+(?P<funcname>[^\(]+)(?P<functypedef>[^\$]+)\s+AS\s+\$\$(?P<funcbody>[^\$]+)\$\$[^\$]*LANGUAGE\s+(?P<funclang>[^\s]+)\s'
+    for match in re.finditer(regex_get_funcs,collapsed_newlines) :
         if match.group('funclang') not in ("'sql'",'"sql"') :
             continue
         func_name=match.group('funcname')
         func_body_str=match.group('funcbody')
         if func_body_str.lower().find('st_asmvt(')>=0 or func_name=='omt_all':
             continue
-        print('NAME',func_name)
+
         s_func_body=sqlglot.parse_one(func_body_str.replace('&&','=='),dialect='postgres')
         #print('BLOCK START')
         #print(s_func_body)
         #print('BLOCK END')
         for s_from in s_func_body.find_all(sqlglot.expressions.From) :
-            print('OUTPUTNAME',s_from.name)
-            if s_from.name.find('planet_osm')>=0 :
+            t_name=s_from.name #table name
+            t_s=t_name.split('_')[-1]
+            if t_name.find('planet_osm')>=0 :
                 # extract the WHERE corresponding to this s_from
-                # and create corresponding index on
+                # to create corresponding index on
                 # planet_osm_* USING GIST(way)
                 s_where=s_from.parent_select.find(sqlglot.expressions.Where)
                 if s_where==None :
-                    print('WARN: UNION ALL SITUATION, NEED INDEXES MULTIPLE ON:')
-                    # TODO: still need to deal with this case
-                    # TODO: if s_from.parent_select.parent_select, just proactively check it and merge the 
-                    #   two wheres with an AND
-                    print([s_f.name for s_f in s_from.parent_select.parent_select.find_all(sqlglot.expressions.From)])
+                    # just proactively take the parent.parent where
                     s_where=s_from.parent_select.parent_select.find(sqlglot.expressions.Where)
-                #print('SFROM',s_from,'SWHERE',s_where)
-                s_intersects=[i for i in s_where.find_all(sqlglot.expressions.Anonymous) if i.name.lower()=='st_intersects']
-                if len(s_intersects)==0 :
-                    print('NO way to index over FOUND')
-                    continue
-                s_intersects[0].replace(sqlglot.expressions.TRUE)
-                s_where=sqlglot.optimizer.simplify.simplify(s_where)
-                # still need to remove z dependency:
-                # [...] AND ("way_area" > 1500 OR z >= 14) AND ("way_area" > 8000 OR z >= 11)
-                # -> (1) [...] AND ("way_area" > 1500 OR [TRUE]) <--REMOVE:AND ("way_area" > 8000 OR z >= 11)-->
-                # -> (2) [...] AND <--REMOVE:("way_area" > 1500 OR z>=14) AND ("way_area" > 8000 OR [TRUE])
-                # as in: for every AND that contains any z references :
-                # replace the z reference with a TRUE and remove all other z-referencing ANDs,
-                # then sqlglot.simplify() that and make multiple indexes.
-                # add comments to sql that e.g way_area should have BETWEEN constraints explicitly
-                # where z-implied
-                print('SWHERE',s_where)
-            print()
-        print()
+                    if s_where==None :
+                        print('ABANDONING: too complicated subquery, next function')
+                        continue
+
+                # s_where references some data that should not be indexed:
+                s_where=remove_way_var(s_where.copy())
+                s_wheres=remove_z_var(s_where)
+                if len(s_wheres)!=0 :
+                    for o_r in s_wheres :
+                        yield {'func':func_name,'table':t_name,'tableshort':t_s,'where':o_r['s'].sql(),'z':True,'parent':o_r['parent'],'geom':'way'}
+                else :
+                    yield {'func':func_name,'table':t_name,'tableshort':t_s,'where':s_where.sql(),'z':False,'geom':'way'}
+
+def sql_index_command(data:typing.Dict[str,str],operation:str)->str :
+    index_name='idx_'+data['func'].split('.')[-1]+'_'+data['tableshort']
+    if data['z'] :
+        index_name=index_name+'_'+data['parent']
+    if operation=='create' :
+        return f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {data['table']} USING GIST({data['geom']}) {data['where']}"
+    elif operation=='drop' :
+        return f"DROP INDEX IF EXISTS {index_name}"
+
 
 if __name__=='__main__' :
     import sys
@@ -185,7 +255,8 @@ if __name__=='__main__' :
     if len(sys.argv)>2 and sys.argv[2]=='--print' :
         print(sql_script)
     elif len(sys.argv)>2 and sys.argv[2]=='--index' :
-        parse_indexed_create(sql_script)
+        for d in parse_indexed_create(sql_script) :
+            print(sql_index_command(d,'create'),end='\n\n')
     else :
         try :
             c.execute(sql_script)

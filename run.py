@@ -98,7 +98,10 @@ need_columns={
         'mtb_scale', 'boundary', 'admin_level', 'highway',
         'railway', 'intermittent', 'bridge', 'tunnel', 'ford',
         'waterway', 'wikipedia', 'wikidata', 'name', 'ele',
-        'natural', 'route', 'ref', 'aeroway',
+        'natural', 'route', 'ref', 'aeroway', 'construction',
+        'aerialway', 'shipway', 'man_made', 'public_transport',
+        'network', 'oneway', 'ramp', 'service', 'toll',
+        'expressway', 'layer', 'level', 'indoor',
 
         'way', 'tags', 'osm_id',
     ),
@@ -110,7 +113,7 @@ need_columns={
         'admin_level', 'bridge', 'tunnel', 'ford',
         'water', 'intermittent', 'natural', 'covered',
         'ref','aeroway', 'aerodrome_type', 'iata', 'icao',
-        'ele',
+        'ele', 'wetland',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

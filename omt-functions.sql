@@ -1,8 +1,8 @@
 
 -- TEMPLATE usage:
 -- need to define variables in run.py, then
--- SYNTAX {% if debug %} THEN SQL STATEMENT {% else %} ELSE SQL STATEMENT {% endif %}
---    where debug is a boolean variable
+-- SYNTAX {% if with_osm_id %} THEN SQL STATEMENT {% else %} ELSE SQL STATEMENT {% endif %}
+--    where with_osm_id is a boolean variable
 -- other SYNTAX {{ omt_func_pref }}
 --    where omt_func_pref is a text variable
 
@@ -26,6 +26,12 @@
 -- TODO: 
 --  *move all table names to templated table names
 --  *after moved all column names to template, check 5432 database as well
+
+-- zoom filtering:
+--  water features filter out by area
+--  water line features: remove at z<13
+-- landcover z>=7 else empty
+-- landuse empty ? z>=11 ?
 
 -- implementation details:
 --  see https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions#Inlining_conditions_for_table_functions
@@ -151,7 +157,6 @@ CREATE TYPE {{omt_typ_pref}}_park AS (
 
 CREATE TYPE {{omt_typ_pref}}_place AS (
 {% if with_osm_id %} osm_id text, {% endif %}
-{% if debug %} way_area real, {% endif %}
   name text,
   capital integer,
   class text,
@@ -553,8 +558,8 @@ SELECT * FROM (
           WHEN {{line.construction_v}} IN ('primary','primary_link') THEN 'primary_construction'
           WHEN {{line.construction_v}} IN ('secondary','secondary_link') THEN 'secondary_construction'
           WHEN {{line.construction_v}} IN ('tertiary','tertiary_link') THEN 'tertiary_construction'
-          WHEN {{line.construction_v}} IN ('minor','minor_link','OTHERS') THEN 'minor_construction'
-          ELSE 'minor_construction' -- like this ?
+          WHEN {{line.construction_v}} IN ('minor','minor_link') THEN 'minor_construction'
+          ELSE 'minor_construction' -- when OTHERs
         END)
       WHEN {{line.highway_v}} IN ('motorway','trunk','primary','secondary','tertiary',
         'service','track','raceway') THEN {{line.highway_v}}||(CASE WHEN NOT {{line.construction_ne}}
@@ -565,9 +570,9 @@ SELECT * FROM (
       WHEN {{line.highway_v}} IN ('road') THEN 'unknown'
       WHEN {{line.highway_v}} IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
         THEN substring({{line.highway_v}},'([a-z]+)')
-      WHEN {{line.route_v}} IN ('bicycle') OR {{line.highway_v}} IN ('cycleway') THEN 'bicycle_route' --NOTE:extension
+      WHEN {{line.route_v}} IN ('bicycle') THEN 'bicycle_route' --NOTE:extension
       --WHEN {{line.highway_v}} IN ('cycleway') THEN 'bicycle_route' -- NOTE:extension, MOVE cycleway->path here
-      WHEN {{line.highway_v}} IN ('path','pedestrian','footway','steps') THEN 'path'||(
+      WHEN {{line.highway_v}} IN ('cycleway','path','pedestrian','footway','steps') THEN 'path'||(
         CASE WHEN {{line.construction_v}} IS NOT NULL
         AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
       WHEN {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular') THEN 'rail'
@@ -644,21 +649,27 @@ SELECT * FROM (
   WHERE (
     {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
       'monorail','tram')
-    OR ({{line.highway_v}} IN ('motorway','motorway_link','trunk','trunk_link','primary','primary_link',
+    -- hide link bits above zoom 12
+    OR ({{line.highway_v}} IN ('motorway_link','trunk_link','primary_link','secondary_link',
+      'tertiary_link') AND z>=12)
+    OR {{line.highway_v}} IN ('motorway','trunk','primary',
       'pedestrian','bridleway','corridor','service','track','raceway','busway',
-      'bus_guideway','construction') AND z>=14)
-    OR ({{line.highway_v}} IN ('path','footway','cycleway','steps') AND z>=13) -- hide paths at lowzoom
-    OR ({{line.highway_v}} IN ('unclassified','residential','living_street') AND z>=12) -- hide minorroads
-    OR ({{line.highway_v}} IN ('tertiary','tertiary_link','road') AND z>=11)
-    OR ({{line.highway_v}} IN ('secondary','secondary_link') AND z>=9)
-    OR aerialway IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
+      'bus_guideway','construction',
+      'path','footway','cycleway','steps',
+      'unclassified','residential','living_street',
+      'tertiary','road','secondary')
+    OR {{line.aerialway_v}} IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
       'j-bar','mixed_lift')
     OR {{line.route_v}} IN ('bicycle') --NOTE:extension
   ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
-WHERE (z>=14) OR (12<=z AND z<14 AND class NOT IN ('path')) OR
-  (10<=z AND z<12 AND class NOT IN ('minor')) OR (z<10 AND class IN ('primary','bicycle_route') AND
-    -- extension
-    CASE WHEN class='bicycle_route' THEN network IN ('national') ELSE true END);
+WHERE (
+     (substring(class,'([a-z]+)') IN ('track','path','service') AND z>=13)
+  OR (substring(class,'([a-z]+)') IN ('tertiary','minor') AND z>=11)
+  OR (substring(class,'([a-z]+)') IN ('secondary','raceway','busway') AND z>=9)
+  OR (substring(class,'([a-z]+)') IN ('primary','motorway','trunk','ferry') AND z>=3)
+    --extension
+  OR (class='bicycle_route' AND network='national' AND z>=3)
+);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -673,7 +684,9 @@ AS $$
 SELECT
 {% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
   (array_agg(name))[1] AS name,
-  (CASE WHEN (z<12 AND class='primary') OR (z<13 AND class IN ('primary','secondary')) THEN ref
+  (CASE WHEN
+      (z>=07 AND class IN ('motorway') AND brunnel IS NULL)
+      OR (z>=12 AND class IN ('primary','motorway')) THEN ref
     ELSE NULL
   END) AS ref,class,(array_agg(subclass))[1] AS subclass,
   (array_agg(network))[1] AS network,brunnel,
@@ -751,7 +764,7 @@ SELECT name,waterway AS class,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM {{line.table_name}}
 WHERE {{line.waterway_v}} IN ('stream','river','canal','drain','ditch')
-  AND ST_Intersects({{line.way_v}},bounds_geom);
+  AND ST_Intersects({{line.way_v}},bounds_geom) AND z>=13;
     --TODO: by-zoom specificities
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -767,7 +780,6 @@ SELECT * FROM (
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
       WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
     END) AS osm_id, {% endif %}
-{% if debug %} way_area, {% endif %}
     name,admin_level::integer AS capital,place AS class,
     (tags->'ISO3166-1') AS iso_a2,
     (CASE WHEN way_area IS NULL
@@ -1132,7 +1144,6 @@ WITH
     FROM {{omt_func_pref}}_park(ST_TileEnvelope(z,x,y))),
   premvt_place AS (
     SELECT {{additional_name_columns}} *
-      {% if debug %} ,z {% endif %}
     FROM {{omt_func_pref}}_place(ST_TileEnvelope(z,x,y),z)),
   premvt_poi AS (
     SELECT {{additional_name_columns}} *
@@ -1177,7 +1188,7 @@ WITH
       ref,length(ref) AS ref_length,
       network,class,subclass,brunnel,level,layer,indoor,
       geom
-    FROM premvt_transportation WHERE name IS NOT NULL
+    FROM premvt_transportation WHERE name IS NOT NULL OR ref IS NOT NULL
   )
 SELECT string_agg(foo.mvt,''::bytea) FROM (
   SELECT ST_AsMVT(premvt_aerodrome_label,'aerodrome_label') AS mvt

@@ -303,7 +303,6 @@ if __name__=='__main__' :
         'omt_func_pref':'public.omt',
         # DOES NOT use the omt_func_pref
         'omt_all_func':'public.omt_all',
-        'debug':True,
     })
     if len(sys.argv)>2 and sys.argv[2]=='--print' :
         print(sql_script)

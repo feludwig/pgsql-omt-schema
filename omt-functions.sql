@@ -234,14 +234,11 @@ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_point_admin_parent_area(node_id bigint) RETURNS real
 AS $$
-  SELECT way_area FROM (SELECT id
-    FROM planet_osm_rels WHERE planet_osm_member_ids(members,'N'::char(1)) && ARRAY[node_id]::bigint[]
-    AND (members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_centre"}]')::jsonb
-      OR members @> ('[{"type":"N","ref":'||node_id||',"role":"admin_center"}]')::jsonb
-      OR members @> ('[{"type":"N","ref":'||node_id||',"role":"label"}]')::jsonb)
-  ) AS parents
-  JOIN {{polygon.table_name}} ON -parents.id={{polygon.osm_id_v}}
-  ORDER BY({{polygon.way_area_v}}) DESC LIMIT 1;
+SELECT {{polygon.way_area}}
+FROM {{polygon.table_name}} WHERE {{polygon.boundary_v}}='administrative'
+    AND ST_Intersects(way,(SELECT {{point.way}} FROM {{point.table_name}}
+        WHERE {{point.osm_id_v}}=node_id))
+  ORDER BY({{polygon.way_area_v}}) ASC LIMIT 1;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -258,9 +255,9 @@ WITH enclosing_area AS (
       AND ST_Intersects(way,(SELECT {{point.way}} FROM {{point.table_name}}
           WHERE {{point.osm_id_v}}=node_id))
     ORDER BY({{polygon.admin_level_v}}) DESC LIMIT 1)
-  SELECT CASE WHEN enclosing_area.samename=true THEN get_rank_by_area(way_area)
+  SELECT CASE WHEN enclosing_area.samename=true THEN {{omt_func_pref}}_get_rank_by_area(way_area)
     ELSE
-      get_rank_by_area(way_area)+1
+      {{omt_func_pref}}_get_rank_by_area(way_area)+1
     END FROM enclosing_area;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
@@ -393,23 +390,23 @@ SELECT
   ST_AsMVTGeom(way,bounds_geom) AS geom
   FROM (SELECT
     ( CASE
-      WHEN landuse IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
-        'grass','grassland','meadow','forest','village_green','recreation_ground') THEN landuse
-      WHEN "natural" IN ('wood','wetland','fell','grassland','heath','scrub','shrubbery','tundra',
-      'glacier','bare_rock','scree','beach','sand','dune') THEN "natural"
-      WHEN leisure IN ('park','garden','golf_course') THEN leisure
-      WHEN tags->'wetland' IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat',
-        'saltmarsh','mangrove') THEN tags->'wetland'
+      WHEN {{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
+        'grass','grassland','meadow','forest','village_green','recreation_ground') THEN {{polygon.landuse_v}}
+      WHEN {{polygon.natural_v}} IN ('wood','wetland','fell','grassland','heath','scrub','shrubbery','tundra',
+      'glacier','bare_rock','scree','beach','sand','dune') THEN {{polygon.natural_v}}
+      WHEN {{polygon.leisure_v}} IN ('park','garden','golf_course') THEN {{polygon.leisure_v}}
+      WHEN {{polygon.wetland_v}} IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat',
+        'saltmarsh','mangrove') THEN {{polygon.wetland_v}}
       ELSE NULL
     END ) AS subclass,way
-  FROM planet_osm_polygon
-  WHERE (landuse IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
+  FROM {{polygon.table_name}}
+  WHERE ({{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
     'grass','grassland','meadow','forest','village_green','recreation_ground')
-  OR "natural" IN ('wood','wetland','fell','grassland','heath','scrub','shrubbery','tundra',
+  OR {{polygon.natural_v}} IN ('wood','wetland','fell','grassland','heath','scrub','shrubbery','tundra',
     'glacier','bare_rock','scree','beach','sand','dune')
-  OR leisure IN ('park','garden','golf_course')
-  OR wetland IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
-  ) AND ST_Intersects(way,bounds_geom) AND (
+  OR {{polygon.leisure_v}} IN ('park','garden','golf_course')
+  OR {{polygon.wetland_v}} IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
+  ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
     (z>=14 AND {{polygon.way_area_v}}>1500) OR
     (z>=13 AND {{polygon.way_area_v}}>6000) OR
     (z>=12 AND {{polygon.way_area_v}}>24e3) OR
@@ -547,86 +544,86 @@ SELECT * FROM (
   {% if with_osm_id %}
     (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
   {% endif %}
-    name,
-    ref,
+    {{line.name}},
+    {{line.ref}},
   -- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
     (CASE
-      WHEN highway = 'construction' THEN (CASE
-          WHEN construction IN ('motorway','motorway_link') THEN 'motorway_construction'
-          WHEN construction IN ('primary','primary_link') THEN 'primary_construction'
-          WHEN construction IN ('secondary','secondary_link') THEN 'secondary_construction'
-          WHEN construction IN ('tertiary','tertiary_link') THEN 'tertiary_construction'
-          WHEN construction IN ('minor','minor_link','OTHERS') THEN 'minor_construction'
+      WHEN {{line.highway_v}} = 'construction' THEN (CASE
+          WHEN {{line.construction_v}} IN ('motorway','motorway_link') THEN 'motorway_construction'
+          WHEN {{line.construction_v}} IN ('primary','primary_link') THEN 'primary_construction'
+          WHEN {{line.construction_v}} IN ('secondary','secondary_link') THEN 'secondary_construction'
+          WHEN {{line.construction_v}} IN ('tertiary','tertiary_link') THEN 'tertiary_construction'
+          WHEN {{line.construction_v}} IN ('minor','minor_link','OTHERS') THEN 'minor_construction'
           ELSE 'minor_construction' -- like this ?
         END)
-      WHEN highway IN ('motorway','trunk','primary','secondary','tertiary',
-        'service','track','raceway') THEN highway||(CASE WHEN construction IS NOT NULL
-        AND construction !='no' THEN '_construction' ELSE '' END)
-      WHEN highway IN ('unclassified','residential','living_street') THEN 'minor'||(
-        CASE WHEN construction IS NOT NULL
-        AND construction !='no' THEN '_construction' ELSE '' END)
-      WHEN highway IN ('road') THEN 'unknown'
-      WHEN highway IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
-        THEN substring(highway,'([a-z]+)')
-      WHEN route IN ('bicycle') OR highway IN ('cycleway') THEN 'bicycle_route' --NOTE:extension
-      --WHEN highway IN ('cycleway') THEN 'bicycle_route' -- NOTE:extension, MOVE cycleway->path here
-      WHEN highway IN ('path','pedestrian','footway','steps') THEN 'path'||(
-        CASE WHEN construction IS NOT NULL
-        AND construction !='no' THEN '_construction' ELSE '' END)
-      WHEN railway IN ('rail','narrow_gauge','preserved','funicular') THEN 'rail'
-      WHEN railway IN ('subway','light_rail','monorail','tram') THEN 'transit'
-      WHEN aerialway <> '' THEN 'aerialway'
-      WHEN tags->'shipway' <> '' THEN tags->'shipway'
-      WHEN man_made <> '' THEN man_made
+      WHEN {{line.highway_v}} IN ('motorway','trunk','primary','secondary','tertiary',
+        'service','track','raceway') THEN {{line.highway_v}}||(CASE WHEN NOT {{line.construction_ne}}
+        AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
+      WHEN {{line.highway_v}} IN ('unclassified','residential','living_street') THEN 'minor'||(
+        CASE WHEN NOT {{line.construction_ne}}
+        AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
+      WHEN {{line.highway_v}} IN ('road') THEN 'unknown'
+      WHEN {{line.highway_v}} IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
+        THEN substring({{line.highway_v}},'([a-z]+)')
+      WHEN {{line.route_v}} IN ('bicycle') OR {{line.highway_v}} IN ('cycleway') THEN 'bicycle_route' --NOTE:extension
+      --WHEN {{line.highway_v}} IN ('cycleway') THEN 'bicycle_route' -- NOTE:extension, MOVE cycleway->path here
+      WHEN {{line.highway_v}} IN ('path','pedestrian','footway','steps') THEN 'path'||(
+        CASE WHEN {{line.construction_v}} IS NOT NULL
+        AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
+      WHEN {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular') THEN 'rail'
+      WHEN {{line.railway_v}} IN ('subway','light_rail','monorail','tram') THEN 'transit'
+      WHEN {{line.aerialway_v}} <> '' THEN 'aerialway'
+      WHEN NOT {{line.shipway_ne}} THEN {{line.shipway_v}}
+      WHEN NOT {{line.man_made_ne}} THEN {{line.man_made_v}}
     END) AS class, 
     (CASE
-      WHEN railway IS NOT NULL THEN railway
-      WHEN (highway IS NOT NULL OR public_transport IS NOT NULL)
-          AND highway IN ('path','pedestrian','footway','cycleway','steps')
-        THEN COALESCE(NULLIF(public_transport,''),highway)
-      WHEN aerialway IS NOT NULL THEN aerialway
+      WHEN NOT {{line.railway_ne}} THEN {{line.railway_v}}
+      WHEN (NOT {{line.highway_ne}} OR NOT {{line.public_transport_ne}})
+          AND {{line.highway_v}} IN ('path','pedestrian','footway','cycleway','steps')
+        THEN COALESCE(NULLIF({{line.public_transport_v}},''),{{line.highway_v}})
+      WHEN {{line.aerialway_v}} IS NOT NULL THEN {{line.aerialway_v}}
     END) AS subclass,
-    (CASE WHEN route IN ('bicycle') THEN
-      (CASE tags->'network' WHEN 'icn' THEN 'international'
+    (CASE WHEN {{line.route_v}} IN ('bicycle') THEN
+      (CASE {{line.network_v}} WHEN 'icn' THEN 'international'
         WHEN 'ncn' THEN 'national'
         WHEN 'rcn' THEN 'regional'
         WHEN 'lcn' THEN 'local'
       END) --NOTE:extension
-      ELSE NULLIF(tags->'network','') END) AS network,
+      ELSE NULLIF({{line.network_v}},'') END) AS network,
     (CASE
-      WHEN bridge IS NOT NULL AND bridge!='no' THEN 'bridge'
-      WHEN tunnel IS NOT NULL AND tunnel!='no' THEN 'tunnel'
-      WHEN tags->'ford' IS NOT NULL AND (tags->'ford')!='no' THEN 'ford'
+      WHEN {{line.bridge_v}} IS NOT NULL AND {{line.bridge_v}}!='no' THEN 'bridge'
+      WHEN {{line.tunnel_v}} IS NOT NULL AND {{line.tunnel_v}}!='no' THEN 'tunnel'
+      WHEN {{line.ford_v}} IS NOT NULL AND {{line.ford_v}}!='no' THEN 'ford'
     END) AS brunnel,
     (CASE
-      WHEN oneway IN ('no') THEN 0
-      WHEN oneway IN ('-1') THEN -1
-      WHEN oneway IS NOT NULL THEN 1
+      WHEN {{line.oneway_v}} IN ('no') THEN 0
+      WHEN {{line.oneway_v}} IN ('-1') THEN -1
+      WHEN {{line.oneway_v}} IS NOT NULL THEN 1
       ELSE NULL
     END) AS oneway,
     (CASE
-      WHEN tags->'ramp' IN ('no','separate') THEN 0
-      WHEN tags->'ramp' IN ('yes') THEN 1
+      WHEN {{line.ramp_v}} IN ('no','separate') THEN 0
+      WHEN {{line.ramp_v}} IN ('yes') THEN 1
       ELSE NULL
     END) AS ramp,
-    NULLIF(service,'') AS service,
+    NULLIF({{line.service_v}},'') AS service,
     CASE WHEN access IN ('no','private') THEN false ELSE NULL END AS access,
     (CASE
-      WHEN toll IN ('no') THEN 0
-      WHEN toll IS NOT NULL THEN 1
+      WHEN {{line.toll_v}} IN ('no') THEN 0
+      WHEN NOT {{line.toll_ne}} THEN 1
       ELSE 0
     END) AS toll,
     (CASE
-      WHEN tags->'expressway' IN ('yes') THEN 1
+      WHEN {{line.expressway_v}} IN ('yes') THEN 1
       ELSE NULL
     END) AS expressway,
-    (CASE WHEN bicycle IN ('yes','1','designated','permissive') THEN 1
-      WHEN bicycle IN ('no','dismount') THEN 0 ELSE NULL
+    (CASE WHEN {{line.bicycle_v}} IN ('yes','1','designated','permissive') THEN 1
+      WHEN {{line.bicycle_v}} IN ('no','dismount') THEN 0 ELSE NULL
       --TODO: why not tags->'cycleway' &+ tags->'cycleway:left' and tags->'cycleway:right' ?
     END) AS cycleway, --NOTE: extension
-    layer,
-    tags->'level' AS level,
-    (CASE WHEN tags->'indoor' IN ('yes','1') THEN 1 END) AS indoor,
+    {{line.layer}},
+    {{line.level}},
+    (CASE WHEN {{line.indoor_v}} IN ('yes','1') THEN 1 END) AS indoor,
     -- DO THE ZOOM modulation!
     -- https://github.com/openmaptiles/openmaptiles/blob/master/layers/transportation/transportation.sql
     -- also CHECK tracktypes! in style they look like asphalt roads
@@ -775,7 +772,7 @@ SELECT * FROM (
     (tags->'ISO3166-1') AS iso_a2,
     (CASE WHEN way_area IS NULL
         THEN {{omt_func_pref}}_get_point_admin_enclosing_rank(osm_id)
-      ELSE get_rank_by_area(way_area) END)+adjust_rank_by_class(place) AS rank,
+      ELSE {{omt_func_pref}}_get_rank_by_area(way_area) END)+{{omt_func_pref}}_adjust_rank_by_class(place) AS rank,
     ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
       WHEN tablefrom='polygon' THEN ST_Centroid(way) END),bounds_geom) AS geom
   FROM (

@@ -521,7 +521,7 @@ WHERE ({{line.boundary_v}} IN ('administrative')
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_housenumber(bounds_geom geometry)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_housenumber(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_housenumber
 AS $$
 SELECT "addr:housenumber" AS housenumber,
@@ -536,7 +536,7 @@ FROM (
   SELECT "addr:housenumber",way,'polygon' AS tablefrom FROM planet_osm_polygon)
     AS layer_housenumber
   -- obviously don't scan on the ST_Centroid(way) because those are not indexed
-WHERE "addr:housenumber" IS NOT NULL AND ST_Intersects(way,bounds_geom)
+WHERE "addr:housenumber" IS NOT NULL AND ST_Intersects(way,bounds_geom) AND z>=14;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1131,7 +1131,7 @@ WITH
   premvt_building AS (
     SELECT * FROM {{omt_func_pref}}_building(ST_TileEnvelope(z,x,y),z)),
   premvt_housenumber AS (
-    SELECT * FROM {{omt_func_pref}}_housenumber(ST_TileEnvelope(z,x,y))),
+    SELECT * FROM {{omt_func_pref}}_housenumber(ST_TileEnvelope(z,x,y),z)),
   premvt_landcover AS (
     SELECT * FROM {{omt_func_pref}}_landcover(ST_TileEnvelope(z,x,y),z)),
   premvt_landuse AS (

@@ -252,12 +252,16 @@ def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,command:str) :
     names=[]
     notices=[]
     start=datetime.datetime.now()
-    for d in parse_indexed_create(sql_script) :
+    #collapse generator to get out error messages and flush the
+    # annoying "applying array index offset" at the start
+    payload=list(parse_indexed_create(sql_script))
+    #also for len(payload) progress reports
+    for ix,d in enumerate(payload) :
         start_one=datetime.datetime.now()
         if command=='names' :
             names.append(d['name'])
             continue
-        print(len(d['where']),d['name'])
+        print(ix+1,'/',len(payload),'\t',len(d['where']),d['name'])
         try :
             c.execute(sql_index_command(d,command))
         except psycopg2.Error as err :

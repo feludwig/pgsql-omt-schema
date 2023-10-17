@@ -87,7 +87,7 @@ with
 
 ### Overzoom
 
-You may note the "maxzoom":15,"overzoom":1` above, they allow to save some processing on the
+You may note the `"maxzoom":15,"overzoom":1` above, they allow to save some processing on the
 server side for any zoom above 15. The functions are written to present all data
 at zoom 15, and therefore higher-zoom tiles do not need to be generated if the client already has the z15.
 

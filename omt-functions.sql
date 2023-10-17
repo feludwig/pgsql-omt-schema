@@ -858,7 +858,7 @@ AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name,class,subclass,
-{% if same_rank_poi_high_zooms %} (CASE WHEN z>=17 THEN 30::int ELSE {%endif%}
+{% if same_rank_poi_high_zooms %} (CASE WHEN z>=15 THEN 30::int ELSE {%endif%}
   (row_number() OVER (ORDER BY ((CASE
   WHEN name IS NOT NULL THEN -100 ELSE 0 END)+{{omt_func_pref}}_get_poi_class_rank(class)) ASC))::int
 {% if same_rank_poi_high_zooms %} END) {%endif%} AS rank,
@@ -1228,5 +1228,5 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-SELECT length({{omt_all_func}}(16,34303,22938));
+SELECT length({{omt_all_func}}(15,17151,11469));
 

@@ -8,7 +8,9 @@
       "type": "vector",
       "tiles":[ 
         "https://<ADD HERE:hostname>/public.contours_vector/{z}/{x}/{y}.pbf"
-      ]
+      ],
+      "maxzoom":15,
+      "overzoom":1
     }
   },
   "layers": [
@@ -17,7 +19,7 @@
       "type": "line",
       "source": "contours",
       "source-layer": "heights",
-      "filter" : [ "to-boolean", "height100" ],
+      "filter" : ["to-boolean", ["get","height100"]],
       "layout": {"line-cap": "round", "visibility": "visible"},
       "paint": {
         "line-color": [
@@ -34,7 +36,7 @@
       "type": "line",
       "source": "contours",
       "source-layer": "heights",
-      "filter" : [ "to-boolean", "height50" ],
+      "filter" : ["to-boolean", ["get","height50"]],
       "layout": {"line-cap": "round", "visibility": "visible"},
       "paint": {
         "line-color": [
@@ -51,7 +53,7 @@
       "type": "line",
       "source": "contours",
       "source-layer": "heights",
-      "filter" : [ "to-boolean", "height10" ],
+      "filter" : ["to-boolean", ["get","height10"]],
       "layout": {"line-cap": "round", "visibility": "visible"},
       "paint": {
         "line-color": [

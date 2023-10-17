@@ -78,10 +78,25 @@ with
           "type": "vector",
           "tiles": [
             "https:// _tileserv.your.server_ /public.omt_all/{z}/{x}/{y}.pbf"
-          ]
+          ],
+          "maxzoom":15,
+          "overzoom":1
         }
       },
 ```
+
+### Overzoom
+
+You may note the "maxzoom":15,"overzoom":1` above, they allow to save some processing on the
+server side for any zoom above 15. The functions are written to present all data
+at zoom 15, and therefore higher-zoom tiles do not need to be generated if the client already has the z15.
+
+
+This is called overzoom behaviour: the client keeps all z15 data and does not fetch anything
+more at zooms 16, 17, 18, 19, 20, 21 and 22 (the vector tile limit).
+
+
+The server does not need to generate or cache any data for these z16+ levels as well.
 
 ## Options
 

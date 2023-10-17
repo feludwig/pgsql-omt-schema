@@ -32,7 +32,7 @@ class GeoTable() :
             if colname not in self.__dict__ :
                 self.__dict__[colname]='("'+tags_column+'"'+f"->'{self.aliased(colname)}') AS {colname}"
                 self.__dict__[colname+'_v']='("'+tags_column+'"'+f"->'{self.aliased(colname)}')"
-                self.__dict__[colname+'_ne']='("'+tags_column+'"'+f"?'{self.aliased(colname)}')"
+                self.__dict__[colname+'_ne']='(NOT ("'+tags_column+'"'+f"?'{self.aliased(colname)}'))"
 
         c.execute(c.mogrify('''SELECT 
             (SELECT nspname FROM pg_namespace WHERE oid=relnamespace),relname
@@ -288,7 +288,13 @@ if __name__=='__main__' :
     e.globals=make_global_dict(c,need_columns,aliases)
     t=e.get_template('omt-functions.sql')
     sql_script=t.render(**{
+        # include osm_ids in some layers: useful for
+        # map.on('click') looking up specific features
         'with_osm_id':True,
+        # transportation aggregates roads, remove osm_id if they are
+        # "uninteresting", heuristic: for now just when name IS NULL.
+        # only has an effect if with_osm_id=True
+        'transportation_aggregate_osm_id_reduce':True,
         # WARNING: set to '' to ignore. else NEEDS to have a trailing comma
         # this is only added at the end, after the typedefed-rows have been
         #   generated. tags are not available anymore

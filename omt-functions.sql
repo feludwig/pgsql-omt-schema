@@ -23,7 +23,7 @@
 --    ({point.<colname>_v} is null), which gets contracted to "tags"?<colname> in case of tags
 
 
--- TODO: 
+-- TODO:
 --  *move all table names to templated table names
 --  *after moved all column names to template, check 5432 database as well
 
@@ -224,7 +224,7 @@ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_adjust_rank_by_class(class text) RETURNS int
 AS $$
-SELECT CASE 
+SELECT CASE
   WHEN class IN ('continent','country','state') THEN -2
   WHEN class IN ('province','city') THEN -1
   WHEN class IN ('village') THEN +1
@@ -379,7 +379,7 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landcover(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_landcover
 AS $$
-SELECT 
+SELECT
   ( CASE -- resolve the class from the subclass
     WHEN subclass IN ('farmland', 'farm', 'orchard', 'vineyard', 'plant_nursery' ) THEN 'farmland'
     WHEN subclass IN ('glacier', 'ice_shelf' ) THEN 'ice'
@@ -580,7 +580,7 @@ SELECT * FROM (
       WHEN {{line.aerialway_v}} <> '' THEN 'aerialway'
       WHEN NOT {{line.shipway_ne}} THEN {{line.shipway_v}}
       WHEN NOT {{line.man_made_ne}} THEN {{line.man_made_v}}
-    END) AS class, 
+    END) AS class,
     (CASE
       WHEN NOT {{line.railway_ne}} THEN {{line.railway_v}}
       WHEN (NOT {{line.highway_ne}} OR NOT {{line.public_transport_ne}})
@@ -682,22 +682,30 @@ AS $$
 -- motivation:merge more columns together, because at z>=13 names of
 -- roads are not shown anyways, nor bridges etc...
 SELECT
-{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
-  (array_agg(name))[1] AS name,
+{% if with_osm_id %}
+{% if transportation_aggregate_osm_id_reduce %}
+  (CASE WHEN (array_agg(DISTINCT name))[1] IS NULL THEN NULL
+    ELSE string_agg(DISTINCT osm_id,',')
+  END) AS osm_id,
+{% else %}
+  string_agg(DISTINCT osm_id,',') AS osm_id,
+{% endif %}
+{% endif %}
+  (array_agg(DISTINCT name))[1] AS name,
   (CASE WHEN
       (z>=07 AND class IN ('motorway') AND brunnel IS NULL)
       OR (z>=12 AND class IN ('primary','motorway')) THEN ref
     ELSE NULL
   END) AS ref,class,(array_agg(subclass))[1] AS subclass,
-  (array_agg(network))[1] AS network,brunnel,
-  (array_agg(oneway))[1] AS oneway,min(ramp) AS ramp,
-  (array_agg(service))[1] AS service,
-  (array_agg(access))[1] AS access,max(toll) AS toll,
+  (array_agg(DISTINCT network))[1] AS network,brunnel,
+  (array_agg(DISTINCT oneway))[1] AS oneway,min(ramp) AS ramp,
+  (array_agg(DISTINCT service))[1] AS service,
+  (array_agg(DISTINCT access))[1] AS access,max(toll) AS toll,
   max(expressway) AS expressway,max(cycleway) AS cycleway,
-  layer,(array_agg(level))[1] AS level,
-  max(indoor) AS indoor,(array_agg(bicycle))[1] AS bicycle,
-  (array_agg(foot))[1] AS foot,(array_agg(horse))[1] AS horse,
-  (array_agg(mtb_scale))[1] AS mtb_scale,(array_agg(surface))[1] AS surface,
+  layer,(array_agg(DISTINCT level))[1] AS level,
+  max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
+  (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
+  (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
 GROUP BY(class,ref,brunnel,layer);
@@ -709,16 +717,24 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_highz(bounds_geom ge
 RETURNS setof {{omt_typ_pref}}_named_transportation
 AS $$
 SELECT
-{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
-  name,ref,class,(array_agg(subclass))[1] AS subclass,
-  (array_agg(network))[1] AS network,brunnel,
-  oneway,min(ramp) AS ramp,(array_agg(service))[1] AS service,
+{% if with_osm_id %}
+{% if transportation_aggregate_osm_id_reduce %}
+  (CASE WHEN (array_agg(DISTINCT name))[1] IS NULL THEN NULL
+    ELSE string_agg(DISTINCT osm_id,',')
+  END) AS osm_id,
+{% else %}
+  string_agg(DISTINCT osm_id,',') AS osm_id,
+{% endif %}
+{% endif %}
+  name,ref,class,(array_agg(DISTINCT subclass))[1] AS subclass,
+  (array_agg(DISTINCT network))[1] AS network,brunnel,
+  oneway,min(ramp) AS ramp,(array_agg(DISTINCT service))[1] AS service,
   access,max(toll) AS toll,max(expressway) AS expressway,
   max(cycleway) AS cycleway,
-  layer,(array_agg(level))[1] AS level,
-  max(indoor) AS indoor,(array_agg(bicycle))[1] AS bicycle,
-  (array_agg(foot))[1] AS foot,(array_agg(horse))[1] AS horse,
-  (array_agg(mtb_scale))[1] AS mtb_scale,(array_agg(surface))[1] AS surface,
+  layer,(array_agg(DISTINCT level))[1] AS level,
+  max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
+  (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
+  (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
 -- deduce that a road MAY be candidate for merging if :
@@ -774,7 +790,7 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_place(bounds_geom geometry,z intege
 RETURNS setof {{omt_typ_pref}}_place
 AS $$
 SELECT * FROM (
-  SELECT 
+  SELECT
 {% if with_osm_id %} (CASE
       WHEN tablefrom='point' THEN 'n'||osm_id
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
@@ -800,7 +816,7 @@ SELECT * FROM (
       {{point.way}},
       {{omt_func_pref}}_get_point_admin_parent_area({{point.osm_id_v}}) AS way_area,
       'point' AS tablefrom
-    FROM {{point.table_name}} 
+    FROM {{point.table_name}}
     WHERE {{point.place_v}} IN ('continent','country','state','province','city','town','village',
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place

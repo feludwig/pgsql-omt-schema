@@ -23,9 +23,7 @@ WITH
   )
 SELECT ST_AsMVT(premvt_contours,'heights') FROM premvt_contours;
 $$
-LANGUAGE 'sql'
-STABLE
-PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 SELECT length(public.contours_vector(15,17151,11469));
 

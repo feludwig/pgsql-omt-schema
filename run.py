@@ -18,26 +18,28 @@ class GeoTable() :
             aliases:typing.Dict[str,str]) :
         self.aliases=aliases
         self.table_oid=table_oid
+        c.execute(c.mogrify('''SELECT
+            (SELECT nspname FROM pg_namespace WHERE oid=relnamespace),relname
+            FROM pg_class WHERE oid=%s''',(table_oid,)))
+        self.table_schema,self.table_name=c.fetchall()[0]
+        self.full_table_name=self.table_schema+'.'+self.table_name
         q=c.mogrify('''SELECT attname,atttypid FROM pg_attribute
             WHERE attrelid=%s''',(table_oid,))
         c.execute(q)
 
-        tags_column='tags'
         for (colname,coltype,) in c.fetchall() :
             if colname in need_columns :
-                self.__dict__[colname]=f'"{self.aliased(colname)}" AS {colname}'
-                self.__dict__[colname+'_v']=f'"{self.aliased(colname)}"'
-                self.__dict__[colname+'_ne']=f'("{self.aliased(colname)}" IS NULL)'
+                self.__dict__[colname]=f'{self.table_name}."{self.aliased(colname)}" AS {colname}'
+                self.__dict__[colname+'_v']=f'{self.table_name}."{self.aliased(colname)}"'
+                self.__dict__[colname+'_ne']=f'({self.table_name}."{self.aliased(colname)}" IS NULL)'
+
+        tags_column=f'{self.table_name}."tags"'
         for colname in need_columns :
             if colname not in self.__dict__ :
-                self.__dict__[colname]='("'+tags_column+'"'+f"->'{self.aliased(colname)}') AS {colname}"
-                self.__dict__[colname+'_v']='("'+tags_column+'"'+f"->'{self.aliased(colname)}')"
-                self.__dict__[colname+'_ne']='(NOT ("'+tags_column+'"'+f"?'{self.aliased(colname)}'))"
+                self.__dict__[colname]='('+tags_column+f"->'{self.aliased(colname)}') AS {colname}"
+                self.__dict__[colname+'_v']='('+tags_column+f"->'{self.aliased(colname)}')"
+                self.__dict__[colname+'_ne']='(NOT ('+tags_column+f"?'{self.aliased(colname)}'))"
 
-        c.execute(c.mogrify('''SELECT 
-            (SELECT nspname FROM pg_namespace WHERE oid=relnamespace),relname
-            FROM pg_class WHERE oid=%s''',(table_oid,)))
-        self.table_name='.'.join(c.fetchall()[0])
     def aliased(self,n) :
         if n in self.aliases :
             return self.aliases[n]
@@ -127,7 +129,16 @@ need_columns={
 #type var
 s_where_t=sqlglot.expressions.Where
 
-def remove_way_var(s_where:s_where_t)->typing.Optional[s_where_t] :
+def resolve_aliases(s_where:s_where_t,table_simple:str)->s_where_t :
+    # check all identifiers, if any column matches then replace it with
+    # the geotable's column name
+    local_alias=aliases[table_simple]
+    for i in s_where.find_all(sqlglot.expressions.Identifier) :
+        if i.name in local_alias :
+            i.replace(sqlglot.parse_one('"'+local_alias[i.name]+'"'))
+    return s_where
+
+def remove_way_var(s_where:s_where_t)->s_where_t :
     #   * remove ... AND ST_intersects(way...)
     #       -> and replace with AND TRUE -> and simplify away
     s_intersects=[i for i in s_where.find_all(sqlglot.expressions.Anonymous) if i.name.lower()=='st_intersects']
@@ -222,6 +233,7 @@ def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing
 
                 # s_where references some data that should not be indexed:
                 s_where=remove_way_var(s_where.copy())
+                s_where=resolve_aliases(s_where,t_s)
                 s_wheres=remove_z_var(s_where)
                 def assemble_dict(where_sql:str,z:bool,parent:str) :
                     r={'func':func_name,'table':t_name,
@@ -255,7 +267,6 @@ def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,command:str) :
     command: names -> return the index names as a list, do nothing else
     '''
     names=[]
-    notices=[]
     start=datetime.datetime.now()
     #collapse generator to get out error messages and flush the
     # annoying "applying array index offset" at the start
@@ -272,16 +283,56 @@ def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,command:str) :
         except psycopg2.Error as err :
             print(sql_index_command(d,command))
             raise err
-        for i in access.notices :
-            if i not in notices :
-                print(i)
-                notices.append(i)
+        while len(access.notices)>0 :
+            print(access.notices.pop(0))
         print(command,d['name'],'in',(datetime.datetime.now()-start_one))
     if command=='names' :
         return names
     print(command,'all in',(datetime.datetime.now()-start))
     print(datetime.datetime.now(),'finished')
 
+def run_sql_script(c:psycopg2.extensions.cursor,sql_script:str) :
+    try :
+        c.execute(sql_script)
+    except psycopg2.errors.SyntaxError as err :
+        if str(err).find('"AS"')>=0 :
+            print(end='\033[31m')
+            print('WARNING: Use a "_v" at end of template column name for omitting the "AS": eg {{polygon.boundary_v}} ')
+            print('REMINDER: "_v" for the value of the column')
+            print(end='\033[0m')
+        raise err
+    print(*access.notices)
+
+def render_template_file(filename:str) :
+    t=e.get_template(filename)
+    return t.render(**TEMPLATE_VARS)
+
+
+TEMPLATE_VARS={
+    # include osm_ids in some layers: useful for
+    # map.on('click') looking up specific features
+    'with_osm_id':True,
+    # transportation aggregates roads, remove osm_id if they are
+    # "uninteresting", heuristic: for now just when name IS NULL.
+    # only has an effect if with_osm_id=True
+    'transportation_aggregate_osm_id_reduce':True,
+    # WARNING: set to '' to ignore. else NEEDS to have a trailing comma
+    # this is only added at the end, after the typedefed-rows have been
+    #   generated. tags are not available anymore
+    'additional_name_columns':'name AS "name:latin",',
+    # other non-spec behaviour: the rank value is still filtering out items
+    # on z>17 even though the spec says it SHOULD show all.
+    # to force show all at z>=17, this workaround:
+    'same_rank_poi_high_zooms':True,
+    # NO SPACES in value!
+    'omt_typ_pref':'row_omt',
+    # all functions except omt_all_func will have this prefix
+    'omt_func_pref':'public.omt',
+    # all views/matviews will have this prefix
+    'omt_view_pref':'public.planet_osm',
+    # DOES NOT use the omt_func_pref
+    'omt_all_func':'public.omt_all',
+}
 
 if __name__=='__main__' :
     import sys
@@ -291,59 +342,31 @@ if __name__=='__main__' :
         loader=jinja2.FileSystemLoader(os.path.dirname(__file__)),
     )
     e.globals=make_global_dict(c,need_columns,aliases)
-    t=e.get_template('omt-functions.sql')
-    sql_script=t.render(**{
-        # include osm_ids in some layers: useful for
-        # map.on('click') looking up specific features
-        'with_osm_id':True,
-        # transportation aggregates roads, remove osm_id if they are
-        # "uninteresting", heuristic: for now just when name IS NULL.
-        # only has an effect if with_osm_id=True
-        'transportation_aggregate_osm_id_reduce':True,
-        # WARNING: set to '' to ignore. else NEEDS to have a trailing comma
-        # this is only added at the end, after the typedefed-rows have been
-        #   generated. tags are not available anymore
-        'additional_name_columns':'name AS "name:latin",',
-        # other non-spec behaviour: the rank value is still filtering out items
-        # on z>17 even though the spec says it SHOULD show all.
-        # to force show all at z>=17, this workaround:
-        'same_rank_poi_high_zooms':True,
-        # NO SPACES in value!
-        'omt_typ_pref':'row_omt',
-        # all functions except omt_all_func will have this prefix
-        'omt_func_pref':'public.omt',
-        # DOES NOT use the omt_func_pref
-        'omt_all_func':'public.omt_all',
-    })
+    sql_functions_script=render_template_file('omt-functions.sql')
+    sql_views_script=render_template_file('omt-views.sql')
+    sql_contours_script=render_template_file('contours-function.sql')
+
     if len(sys.argv)>2 and sys.argv[2]=='--print' :
-        print(sql_script)
+        print(sql_functions_script)
     elif len(sys.argv)>2 and sys.argv[2]=='--index' :
         access.commit()
         # WARN: enable transaction-less CREATE INDEX;
         access.autocommit=True
-        run_sql_indexes(c,sql_script,'create')
+        run_sql_indexes(c,sql_functions_script,'create')
     elif len(sys.argv)>2 and sys.argv[2]=='--index-drop' :
         access.commit()
         # WARN: enable transaction-less CREATE INDEX;
         access.autocommit=True
-        run_sql_indexes(c,sql_script,'drop')
+        run_sql_indexes(c,sql_functions_script,'drop')
     elif len(sys.argv)>2 and sys.argv[2]=='--index-print' :
-        for d in parse_indexed_create(sql_script) :
+        for d in parse_indexed_create(sql_functions_script) :
             print(sql_index_command(d,'create'))
     elif len(sys.argv)>2 and sys.argv[2]=='--index-names' :
-        for n in run_sql_indexes(c,sql_script,'names') :
+        for n in run_sql_indexes(c,sql_functions_script,'names') :
             print(n)
     else :
-        try :
-            c.execute(sql_script)
-        except psycopg2.errors.SyntaxError as err :
-            if str(err).find('"AS"')>=0 :
-                print(end='\033[31m')
-                print('WARNING: Use a "_v" at end of template column name for omitting the "AS": eg {{polygon.boundary_v}} ')
-                print('REMINDER: "_v" for the value of the column')
-                print(end='\033[0m')
-            raise err
-        print(*access.notices)
+        run_sql_script(c,sql_views_script)
+        run_sql_script(c,sql_functions_script)
         cols=[col.name for col in c.description]
         while (row:=c.fetchone())!=None :
             print({k:v for k,v in zip(cols,row)})

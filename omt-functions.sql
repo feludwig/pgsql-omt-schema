@@ -104,6 +104,7 @@ CREATE TYPE {{omt_typ_pref}}_aeroway AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_boundary AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   admin_level integer,
   adm0_l text,
   adm0_r text,
@@ -499,17 +500,21 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_boundary(bounds_geom geometry, z integer)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_country_boundary(bounds_geom geometry, z integer)
 RETURNS setof {{omt_typ_pref}}_boundary
+-- pre_country: with not-yet set adm0_l and adm0_r columns, and the ORIGINAL way geometry
 AS $$
-SELECT admin_level::integer AS admin_level,
-  tags->'left:country' AS adm0_l,tags->'right:country' AS adm0_r,
+SELECT
+  -- no template if, REQUIRED in _osm_boundary() function for admin left and admin right deducing
+  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  {{line.admin_level_v}}::integer AS admin_level,
+  NULL AS adm0_l,NULL AS adm0_r,
   0 AS disputed,
-  (CASE admin_level WHEN '2' THEN
-    COALESCE(tags->'ISO3166-1:alpha2',tags->'ISO3166-1',tags->'country_code_fips')
+  (CASE {{line.admin_level_v}} WHEN '2' THEN
+    COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},{{line.country_code_fips_v}})
     ELSE NULL END) AS claimed_by,
-  (CASE boundary WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
-  ST_AsMVTGeom({{line.way_v}},bounds_geom) AS geom
+  (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
+  {{line.way_v}} AS geom -- WARNING: abusive cast, still ST_AsMVTGeom(geom) missing
 FROM {{line.table_name}}
 WHERE ({{line.boundary_v}} IN ('administrative')
     OR (z<=4 AND ({{line.boundary_v}} IN ('maritime')
@@ -521,22 +526,74 @@ WHERE ({{line.boundary_v}} IN ('administrative')
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_boundary(bounds_geom geometry, z integer)
+RETURNS setof {{omt_typ_pref}}_boundary
+AS $$
+WITH pre_country AS (
+  SELECT
+  {% if with_osm_id %} osm_id, {% endif %}
+    admin_level,
+    disputed,claimed_by,maritime,geom
+  FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
+  ),
+  namesides AS (
+    SELECT
+  {% if with_osm_id %} pre_country.osm_id AS osm_id, {% endif %}
+      (array_agg(name))[1] AS name,
+      side,pre_country.admin_level,
+      pre_country.geom
+    FROM (
+      SELECT
+        pre_country.osm_id AS osm_id, --required osm_id for uniqueness
+        p.name,t.val AS side,
+        ST_Area(ST_Intersection(p.way,
+            ST_Buffer(pre_country.geom,10,'side='||t.val))) AS area
+      FROM planet_osm_polygon AS p,
+        (VALUES ('left'),('right')) AS t(val),
+        pre_country
+      WHERE
+        p.way && bounds_geom
+        AND p.boundary='administrative' AND p.admin_level IS NOT NULL
+      ORDER BY (pre_country.osm_id), (pre_country.admin_level::integer) ASC, side
+      ) AS deduced,
+      pre_country
+    WHERE area>0.001 --tolerance
+    --) AS deduced
+  GROUP BY(pre_country.osm_id,deduced.side,pre_country.admin_level,pre_country.geom)
+  )
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  admin_level,
+  (CASE WHEN admin_level<=2
+    THEN (SELECT name FROM namesides WHERE side='left' AND pre_country.geom=geom LIMIT 1)
+    ELSE NULL
+  END) AS adm0_l,
+  (CASE WHEN admin_level<=2
+    THEN (SELECT name FROM namesides WHERE side='right' AND pre_country.geom=geom LIMIT 1)
+    ELSE NULL
+  END) AS adm0_r,
+  disputed,claimed_by,maritime,
+  ST_AsMVTGeom(geom,bounds_geom) AS geom
+FROM pre_country;
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_housenumber(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_housenumber
 AS $$
-SELECT "addr:housenumber" AS housenumber,
+SELECT housenumber,
   ST_AsMVTGeom((CASE
       WHEN tablefrom = 'point' THEN way
       ELSE ST_Centroid(way) END),bounds_geom) AS geom
 FROM (
-  SELECT "addr:housenumber",way,'line' AS tablefrom FROM {{line.table_name}}
+  SELECT {{line.housenumber}},{{line.way}},'line' AS tablefrom FROM {{line.table_name}}
   UNION ALL
-  SELECT "addr:housenumber",way,'point' AS tablefrom FROM {{point.table_name}}
+  SELECT {{point.housenumber}},{{point.way}},'point' AS tablefrom FROM {{point.table_name}}
   UNION ALL
-  SELECT "addr:housenumber",way,'polygon' AS tablefrom FROM planet_osm_polygon)
+  SELECT {{polygon.housenumber}},{{polygon.way}},'polygon' AS tablefrom FROM planet_osm_polygon)
     AS layer_housenumber
   -- obviously don't scan on the ST_Centroid(way) because those are not indexed
-WHERE "addr:housenumber" IS NOT NULL AND ST_Intersects(way,bounds_geom) AND z>=14;
+WHERE housenumber IS NOT NULL AND ST_Intersects(way,bounds_geom) AND z>=14;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

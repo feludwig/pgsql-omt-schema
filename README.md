@@ -25,7 +25,7 @@ A little selection of styles
   - `pip install psycopg2` for autodetecting tables and their columns in database
   - `pip install jinja2` for templating support, autodetected column names and types
   - `pip install sqlglot` for `--index` autogeneration, optional but highly recommended
-for perfomance **Work in progress, not yet functional**
+for perfomance
 
 * `osm2pgsql` was run with `--hstore` containing all missing tags. For now, a mix
 of database columns and `tags->'colname'` accesses happen.
@@ -33,7 +33,7 @@ Maybe this can all be summarized in a `.style` file for osm2pgsql; but applying 
 would require a reimport.
 
 * Tables `*_point`, `*_line` and `*_polygon` exist,
- and you have `SELECT`, `CREATE TYPE`, `CREATE INDEX`, and `CREATE FUNCTION`
+ and you have `SELECT`, `CREATE/DROP TYPE`, `CREATE/DROP INDEX`, and `CREATE OR REPLACE FUNCTION`
 permissions. The tables are found by their suffix,
 the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 Their geometry column is called `way`
@@ -59,6 +59,18 @@ If everything worked, you can:
 and give it the database connection configuration.
 * Important: Visit the `pg_tileserv` url root, and you should see `omt_all` under the
 _Function Layers_ section (`pg_tileserv` needs to detect that is exists).
+
+### Indexes
+
+Launch the index creation: they will take up a minimal amount of disk space in the database
+and can speed up querying performance a little. On bigger databases it may take a long time
+to run (up to 3h per piece on a planet database; around 50 of them, so up to 150h)
+
+* If you want to read them through :
+`python3 run.py 'dbname=gis port=5432 user=user' --index-print`
+
+
+`python3 run.py 'dbname=gis port=5432 user=user' --index`
 
 ### Add tile url
 
@@ -116,7 +128,7 @@ Not the omt schema, but still a rich addition to any map: elevation represented 
 
 On a just somewhat related note: The `contours-function.sql` creates a `pg_tileserv`
 compatible sql function that returns data from a contours lines database
-([setup quide](https://wiki.openstreetmap.org/wiki/Contour_relief_maps_using_mapnik#The_PostGIS_approach)).
+([setup guide](https://wiki.openstreetmap.org/wiki/Contour_relief_maps_using_mapnik#The_PostGIS_approach)).
 The supplied `contours.json` is a simple style for that, adapted from the `contours.xml`
 in the guide.
 
@@ -135,6 +147,8 @@ document.map.on('load',function() {
 });
 ```
 _Note_ : Change `hostname` to your own in the sample `contours.json`.
+
+
 _Note_ : Make sure that the `"sources":{}` section does not contain a source
 name that conflicts with the underlying `style.json` (here `"openmaptiles"` vs `"contours"`)
 
@@ -182,8 +196,8 @@ useable in the same situation as `imposm3`-imported ones (in addition to all
 other situations they are useful in).
 
 
-**Planned** Indexes should somewhat speed up queries. Though I still need to check how much
-additional space they can take up
+Indexes speed queries up by a little, but because they don't use that much space
+compared to data, I still recommend using them.
 
 ### Feature parity
 

@@ -37,6 +37,17 @@
 --  see https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions#Inlining_conditions_for_table_functions
 --  for why this is mostly LANGUAGE 'sql' and not 'plpgsql'
 
+-- SELECT now();CREATE MATERIALIZED VIEW planet_osm_country_boundaries AS
+-- SELECT p.name AS p_name,p.osm_id AS p_osm_id,
+--   ST_Area(ST_Intersection(ST_Buffer(cb.way,10,'side=left'),p.way)) AS leftarea,
+--   ST_Area(ST_Intersection(ST_Buffer(cb.way,10,'side=right'),p.way)) AS rightarea,
+--   cb.*
+-- FROM planet_osm_polygon AS p,planet_osm_line AS cb
+-- WHERE cb.admin_level IS NOT NULL AND cb.admin_level IN ('1','2')
+--   AND p.admin_level=cb.admin_level AND ST_Intersects(p.way,cb.way);
+-- SELECT now();
+
+
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aerodrome_label CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aeroway CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_boundary CASCADE;
@@ -505,8 +516,9 @@ RETURNS setof {{omt_typ_pref}}_boundary
 -- pre_country: with not-yet set adm0_l and adm0_r columns, and the ORIGINAL way geometry
 AS $$
 SELECT
-  -- no template if, REQUIRED in _osm_boundary() function for admin left and admin right deducing
+{% if with_osm_id %}
   (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
   {{line.admin_level_v}}::integer AS admin_level,
   NULL AS adm0_l,NULL AS adm0_r,
   0 AS disputed,
@@ -526,52 +538,102 @@ WHERE ({{line.boundary_v}} IN ('administrative')
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
+
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_boundary(bounds_geom geometry, z integer)
 RETURNS setof {{omt_typ_pref}}_boundary
 AS $$
 WITH pre_country AS (
   SELECT
-  {% if with_osm_id %} osm_id, {% endif %}
-    admin_level,
-    disputed,claimed_by,maritime,geom
+{% if with_osm_id %} osm_id, {% endif %}
+    admin_level,disputed,claimed_by,maritime,geom
   FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
-  ),
-  namesides AS (
-    SELECT
-  {% if with_osm_id %} pre_country.osm_id AS osm_id, {% endif %}
-      (array_agg(name))[1] AS name,
-      side,pre_country.admin_level,
-      pre_country.geom
-    FROM (
-      SELECT
-        pre_country.osm_id AS osm_id, --required osm_id for uniqueness
-        p.name,t.val AS side,
-        ST_Area(ST_Intersection(p.way,
-            ST_Buffer(pre_country.geom,10,'side='||t.val))) AS area
-      FROM planet_osm_polygon AS p,
-        (VALUES ('left'),('right')) AS t(val),
-        pre_country
-      WHERE
-        p.way && bounds_geom
-        AND p.boundary='administrative' AND p.admin_level IS NOT NULL
-      ORDER BY (pre_country.osm_id), (pre_country.admin_level::integer) ASC, side
-      ) AS deduced,
-      pre_country
-    WHERE area>0.001 --tolerance
-    --) AS deduced
-  GROUP BY(pre_country.osm_id,deduced.side,pre_country.admin_level,pre_country.geom)
+--    -- this algorithm tries to find out the country name on the left and right sides
+--    -- of the boundary.
+--    -- TODO: slow performance, create a MATERIALIZED VIEW for the just-country ones ?
+--    -- for querying then just SELECT from matview wherever admin_level<=2
+--  ),
+--  namesides AS (
+--    -- TODO: this still fails with way 124997929
+--    SELECT
+--  {% if with_osm_id %} pre_country.osm_id AS osm_id, {% endif %}
+--      -- the group by collapses row ordering. but we only want the highest-log_int_of_area
+--      -- and highest-admin_level value first (eventually EXTENSION: described below, take multiple names
+--      -- of the counrty first, then ||' '|| also the province name, ||' '|| county name etc..)
+--      -- and we want ORDER BY(log_int_of_area) DESC, so flip it
+--
+--      -- for debugging the name-resolution :
+--      --(array_to_string(array_agg(tosort_name||' lgia'||log_int_of_area::text ORDER BY (99-log_int_of_area)::text||tosort_name ASC),'/'))
+--      substring((array_agg(tosort_name ORDER BY (99-log_int_of_area)::text||tosort_name ASC))[1],2)
+--      AS name,
+--      side,pre_country.admin_level,
+--      pre_country.geom
+--    FROM (
+--      SELECT osm_id,tosort_name,side,area,
+--        -- this log_int_of_area is an approximation of area:
+--        -- if the left sided area is 50000 and the right is 50, approximate a GROUP BY(simplified_are)
+--        -- where round(log(area)) is an appropriate choice: (left_area=53000,adm_l=2,name=abc) and
+--        -- (left_area=61000,adm_l=4,name=def) will go toghether as lg_i_a=4
+--        -- and actually be selected over (right_area=46,adm_l=1,name=ghi) or (right_area=123,...) with
+--        -- lg_i_a=1.
+--        -- TRY not to reach 100, log_int_of_area SHOULD <99! (was 10 and 9 but we can expand like this. now has ample headroom)
+--        -- this is because above, the tosort_name is a ::text and is being sorted by.
+--        -- because we generate log_int_of_area later, we actually sort by log_int_of_area||tosort_name.
+--        (log(15.0,area::numeric)::int) AS log_int_of_area
+--      FROM (
+--        SELECT
+--          pre_country.osm_id AS osm_id, --required osm_id for uniqueness
+--          p.admin_level||p.name AS tosort_name,t.val AS side,
+--          pre_country.admin_level,
+--          -- st_buffer the line geometry to become a polygon, BUT only to left/right side
+--          -- of itself. then measure area of overlap with some test boundary polygon.
+--          -- if said polygon is on left side of line, the area for side='left' should be >0
+--          -- and for side='right' should be =0.
+--          -- but with real world data and complicated boundaries that have tight turns,
+--          -- left and right may both be nonzero. see order by(log_int_of_area) below for that
+--          ST_Area(ST_Intersection(p.way,
+--              ST_Buffer(
+--                -- below there is a pre_country.admin_level<=2 but just to be
+--                -- sure, make NULL here as well
+--                CASE WHEN pre_country.admin_level<=0 THEN pre_country.geom ELSE NULL END,
+--                2.0,'side='||t.val))) AS area
+--        FROM planet_osm_polygon AS p,
+--          (VALUES ('left'),('right')) AS t(val),
+--          pre_country
+--        WHERE
+--          p.way && bounds_geom
+--          AND pre_country.admin_level<=2
+--          AND ST_Intersects(p.way,pre_country.geom)
+--          AND p.boundary='administrative' AND p.admin_level IS NOT NULL
+--          AND p.admin_level IN ('1','2','3','4','5')
+--        ) AS logless_area
+--      WHERE area>0.001 --tolerance
+--      -- TODO: we should just select the highest log_int_of_area: a GROUP BY(log_int_of_area) ?
+--      -- this should enable showing left=Swtizerland/Katon aarau right=Germany/Baden württemberg
+--      -- enhanced from the current left=Switzerland right=Germany...
+--      ORDER BY
+--        -- gather the same features together: ASSUMPTION is that
+--        -- osm_id is a unique id: this is not the case... but it's a reasonable assumption because
+--        -- the next best thing is to create a hash of the geometry: that's exprensive processing...
+--        (logless_area.osm_id),
+--        -- take (left_area=53000,adm_l=** 2 **,name=abc) over (left_area=61000,adm_l=** 4 **,name=def)
+--        (logless_area.admin_level::integer) ASC,
+--        side
+--      ) AS deduced
+--      JOIN pre_country ON pre_country.osm_id=deduced.osm_id
+--  GROUP BY(pre_country.osm_id,deduced.side,pre_country.admin_level,pre_country.geom)
   )
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   admin_level,
-  (CASE WHEN admin_level<=2
-    THEN (SELECT name FROM namesides WHERE side='left' AND pre_country.geom=geom LIMIT 1)
-    ELSE NULL
-  END) AS adm0_l,
-  (CASE WHEN admin_level<=2
-    THEN (SELECT name FROM namesides WHERE side='right' AND pre_country.geom=geom LIMIT 1)
-    ELSE NULL
-  END) AS adm0_r,
+--  (CASE WHEN admin_level<=2
+--    THEN (SELECT name FROM namesides WHERE side='left' AND pre_country.geom=geom LIMIT 1)
+--    ELSE NULL
+--  END) AS adm0_l,
+--  (CASE WHEN admin_level<=2
+--    THEN (SELECT name FROM namesides WHERE side='right' AND pre_country.geom=geom LIMIT 1)
+--    ELSE NULL
+--  END) AS adm0_r,
+  NULL AS adm0_l,NULL AS adm0_r,
   disputed,claimed_by,maritime,
   ST_AsMVTGeom(geom,bounds_geom) AS geom
 FROM pre_country;
@@ -632,9 +694,10 @@ SELECT * FROM (
       WHEN {{line.highway_v}} IN ('cycleway','path','pedestrian','footway','steps') THEN 'path'||(
         CASE WHEN {{line.construction_v}} IS NOT NULL
         AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
+      -- and now non-highways
       WHEN {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular') THEN 'rail'
       WHEN {{line.railway_v}} IN ('subway','light_rail','monorail','tram') THEN 'transit'
-      WHEN {{line.aerialway_v}} <> '' THEN 'aerialway'
+      WHEN NOT {{line.aerialway_ne}} THEN 'aerialway'
       WHEN NOT {{line.shipway_ne}} THEN {{line.shipway_v}}
       WHEN NOT {{line.man_made_ne}} THEN {{line.man_made_v}}
     END) AS class,
@@ -720,10 +783,10 @@ SELECT * FROM (
     OR {{line.route_v}} IN ('bicycle') --NOTE:extension
   ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
 WHERE (
-     (substring(class,'([a-z]+)') IN ('track','path','service') AND z>=13)
+     (z>=13) -- take everything
   OR (substring(class,'([a-z]+)') IN ('tertiary','minor') AND z>=11)
-  OR (substring(class,'([a-z]+)') IN ('secondary','raceway','busway') AND z>=9)
-  OR (substring(class,'([a-z]+)') IN ('primary','motorway','trunk','ferry') AND z>=3)
+  OR (substring(class,'([a-z]+)') IN ('secondary','raceway','busway','transit') AND z>=9)
+  OR (substring(class,'([a-z]+)') IN ('primary','motorway','trunk','ferry','rail','aerialway') AND z>=3)
     --extension
   OR (class='bicycle_route' AND network='national' AND z>=3)
 );

@@ -74,9 +74,13 @@ aliases={
         'aerodrome_type':'aerodrome:type',
     },
     'line':{
+        'housenumber':'addr:housenumber',
         'mtb_scale':'mtb:scale',
+        'iso3166_1_alpha2':'ISO3166-1:alpha2',
+        'iso3166_1':'ISO3166-1',
     },
     'polygon':{
+        'housenumber':'addr:housenumber',
         'aerodrome_type':'aerodrome:type',
     },
 }
@@ -101,7 +105,8 @@ need_columns={
         'natural', 'route', 'ref', 'aeroway', 'construction',
         'aerialway', 'shipway', 'man_made', 'public_transport',
         'network', 'oneway', 'ramp', 'service', 'toll',
-        'expressway', 'layer', 'level', 'indoor',
+        'expressway', 'layer', 'level', 'indoor','country_code_fips',
+        'iso3166_1_alpha2','iso3166_1', 'housenumber',
 
         'way', 'tags', 'osm_id',
     ),
@@ -113,7 +118,7 @@ need_columns={
         'admin_level', 'bridge', 'tunnel', 'ford',
         'water', 'intermittent', 'natural', 'covered',
         'ref','aeroway', 'aerodrome_type', 'iata', 'icao',
-        'ele', 'wetland',
+        'ele', 'wetland', 'housenumber',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

@@ -25,7 +25,9 @@
 
 -- TODO:
 --  *move all table names to templated table names
---  *after moved all column names to template, check 5432 database as well
+--  *check 5432 database: working well
+--  * INDEXer: hardcode the way_area conditions away and INDEX ON GIST(way), way_area
+--    this should be nicer than all the way_area>24e3, way_area>360e3 etc.. separate indexes...
 
 -- zoom filtering:
 --  water features filter out by area
@@ -36,16 +38,6 @@
 -- implementation details:
 --  see https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions#Inlining_conditions_for_table_functions
 --  for why this is mostly LANGUAGE 'sql' and not 'plpgsql'
-
--- SELECT now();CREATE MATERIALIZED VIEW planet_osm_country_boundaries AS
--- SELECT p.name AS p_name,p.osm_id AS p_osm_id,
---   ST_Area(ST_Intersection(ST_Buffer(cb.way,10,'side=left'),p.way)) AS leftarea,
---   ST_Area(ST_Intersection(ST_Buffer(cb.way,10,'side=right'),p.way)) AS rightarea,
---   cb.*
--- FROM planet_osm_polygon AS p,planet_osm_line AS cb
--- WHERE cb.admin_level IS NOT NULL AND cb.admin_level IN ('1','2')
---   AND p.admin_level=cb.admin_level AND ST_Intersects(p.way,cb.way);
--- SELECT now();
 
 
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aerodrome_label CASCADE;
@@ -333,7 +325,7 @@ SELECT
       ELSE 'other' -- remove any NULLs
     END) AS class,
     iata,icao,{{omt_func_pref}}_text_to_int_null(ele) AS ele,
-  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (
   SELECT
 {% if with_osm_id %} ('n'||osm_id) AS osm_id, {% endif %}
@@ -383,7 +375,7 @@ FROM (
   FROM {{polygon.table_name}}
   WHERE {{polygon.aeroway_v}} IN ('aerodrome','heliport','runway','helipad','taxiway','apron')
     ) AS foo
-WHERE ST_Intersects({{polygon.way_v}},bounds_geom);
+WHERE ST_Intersects(way,bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -940,7 +932,7 @@ SELECT * FROM (
     WHERE {{point.place_v}} IN ('continent','country','state','province','city','town','village',
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place
-    WHERE ST_Intersects({{polygon.way_v}},bounds_geom)) AS unfiltered_zoom
+    WHERE ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
   WHERE (z>=14) OR (12<=z AND z<14 AND rank<=8) OR (10<=z AND z<12 AND rank<=5) OR (10>z AND rank<=4);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;

@@ -111,8 +111,8 @@ CREATE TYPE {{omt_typ_pref}}_boundary AS (
   admin_level integer,
   adm0_l text,
   adm0_r text,
-  disputed integer, --TODO: fix, for now always returning 0
-  --disputed_name text,
+  disputed integer,
+  disputed_name text,
   claimed_by text,
   maritime integer,
   geom geometry
@@ -202,12 +202,12 @@ CREATE TYPE {{omt_typ_pref}}_waterway AS (
 
 
 --utilities
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_text_to_real_0(data text) RETURNS real
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_text_to_real_null(data text) RETURNS real
 AS $$
 SELECT CASE
   WHEN data~E'^\\d+(\\.\\d+)?$' THEN data::real
-  WHEN data~E'^\\.\\d+$' THEN ('0'||data)::real -- '.9' -> '0.9' -> 0.9
-  ELSE 0.0 END;
+  WHEN data~E'^\\.\\d+$' THEN ('0'||data)::real -- '.9'::text -> '0.9'::text -> 0.9::real
+  ELSE NULL END;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
@@ -436,17 +436,23 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_building(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_building
 AS $$
-SELECT {{omt_func_pref}}_text_to_real_0(tags->'height') AS render_height,
-  COALESCE({{omt_func_pref}}_text_to_real_0(tags->'min_height'),
-    {{omt_func_pref}}_text_to_real_0(tags->'building:levels')*2.5)::real AS render_min_height,
+SELECT {{omt_func_pref}}_text_to_real_null({{polygon.height_v}}) AS render_height,
+  COALESCE(
+    {{omt_func_pref}}_text_to_real_null({{polygon.min_height_v}}),
+    {{omt_func_pref}}_text_to_real_null({{polygon.building_levels_v}})*2.5
+  )::real AS render_min_height,
   --'#ffff00' AS colour,
-  (CASE WHEN tags->'building:part' IS NULL THEN false ELSE true END) AS hide_3d,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_polygon
-WHERE building IS NOT NULL AND (tags->'location' != 'underground' OR tags->'location' IS NULL)
-  AND ST_Intersects(way,bounds_geom)
+  (CASE
+    WHEN {{polygon.building_part_v}} IS NULL THEN true
+    WHEN {{polygon.building_part_v}} IN ('no') THEN false
+    ELSE NULL END) AS hide_3d,
+  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+FROM {{polygon.table_name}}
+WHERE NOT {{polygon.building_ne}}
+  AND ({{polygon.location_v}} !~ 'underground' OR {{polygon.location_ne}})
+  AND ST_Intersects({{polygon.way_v}},bounds_geom)
   AND (
-    (z>=14 OR way_area>=1700) AND (z>12) -- show no buildings above z>=12
+    (z>=14 OR {{polygon.way_area_v}}>=1700) AND (z>12) -- show no buildings above z>=12
   );
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -513,14 +519,16 @@ SELECT
 {% endif %}
   {{line.admin_level_v}}::integer AS admin_level,
   NULL AS adm0_l,NULL AS adm0_r,
-  0 AS disputed,
+  (CASE WHEN {{line.disputed_v}} IN ('yes') OR {{line.boundary_v}} IN ('disputed') THEN 1
+  END) AS disputed,
+  {{line.disputed_name}},
   (CASE {{line.admin_level_v}} WHEN '2' THEN
     COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},{{line.country_code_fips_v}})
     ELSE NULL END) AS claimed_by,
   (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
   {{line.way_v}} AS geom -- WARNING: abusive cast, still ST_AsMVTGeom(geom) missing
 FROM {{line.table_name}}
-WHERE ({{line.boundary_v}} IN ('administrative')
+WHERE ({{line.boundary_v}} IN ('administrative','disputed')
     OR (z<=4 AND ({{line.boundary_v}} IN ('maritime')
       AND {{line.admin_level_v}} IN ('1','2'))))
    AND (z>=11 OR {{line.admin_level_v}} IN ('1','2','3','4','5','6','7'))
@@ -537,7 +545,7 @@ AS $$
 WITH pre_country AS (
   SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-    admin_level,disputed,claimed_by,maritime,geom
+    admin_level,disputed,disputed_name,claimed_by,maritime,geom
   FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
 --    -- this algorithm tries to find out the country name on the left and right sides
 --    -- of the boundary.
@@ -626,7 +634,7 @@ SELECT
 --    ELSE NULL
 --  END) AS adm0_r,
   NULL AS adm0_l,NULL AS adm0_r,
-  disputed,claimed_by,maritime,
+  disputed,disputed_name,claimed_by,maritime,
   ST_AsMVTGeom(geom,bounds_geom) AS geom
 FROM pre_country;
 $$
@@ -1289,6 +1297,7 @@ WITH
     SELECT * FROM {{omt_func_pref}}_transportation(ST_TileEnvelope(z,x,y),z)),
   premvt_water_noname AS (
     SELECT
+      --TODO: thow away this id
       id,class,intermittent,brunnel,geom
     FROM premvt_water
   ),
@@ -1301,7 +1310,8 @@ WITH
   ),
   premvt_transportation_noname AS (
     SELECT
-      {% if with_osm_id %} osm_id, {% endif %}
+      -- only osm_id if not in transportation_name
+      {% if with_osm_id %} (CASE WHEN name IS NULL AND ref IS NULL THEN osm_id END) AS osm_id, {% endif %}
       network,class,subclass,brunnel,oneway,ramp,service,
       access,toll,expressway,cycleway,level,layer,indoor,bicycle,
       foot,horse,mtb_scale,surface,
@@ -1312,7 +1322,7 @@ WITH
     SELECT
       {% if with_osm_id %} osm_id, {% endif %}
       {{additional_name_columns}}
-      name,{{additional_name_columns}}
+      name,
       replace(ref,';',E'\n') AS ref,length(ref) AS ref_length,
       network,class,subclass,brunnel,level,layer,indoor,
       geom

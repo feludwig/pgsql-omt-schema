@@ -1313,7 +1313,7 @@ WITH
       {% if with_osm_id %} osm_id, {% endif %}
       {{additional_name_columns}}
       name,{{additional_name_columns}}
-      ref,length(ref) AS ref_length,
+      replace(ref,';',E'\n') AS ref,length(ref) AS ref_length,
       network,class,subclass,brunnel,level,layer,indoor,
       geom
     FROM premvt_transportation WHERE name IS NOT NULL OR ref IS NOT NULL

@@ -736,7 +736,7 @@ SELECT * FROM (
     (CASE
       WHEN {{line.toll_v}} IN ('no') THEN 0
       WHEN NOT {{line.toll_ne}} THEN 1
-      ELSE 0
+      ELSE NULL
     END) AS toll,
     (CASE
       WHEN {{line.expressway_v}} IN ('yes') THEN 1
@@ -846,13 +846,13 @@ SELECT
   string_agg(DISTINCT osm_id,',') AS osm_id,
 {% endif %}
 {% endif %}
-  name,ref,class,(array_agg(DISTINCT subclass))[1] AS subclass,
+  name,ref,class,subclass,
   (array_agg(DISTINCT network))[1] AS network,brunnel,
   oneway,min(ramp) AS ramp,(array_agg(DISTINCT service))[1] AS service,
   access,max(toll) AS toll,max(expressway) AS expressway,
   max(cycleway) AS cycleway,
   layer,(array_agg(DISTINCT level))[1] AS level,
-  max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
+  max(indoor) AS indoor,bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
@@ -866,7 +866,7 @@ FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
 -- then do the merging with unnest(ST_ClusterIntersecting())::multigeometries
 -- ST_CollectionExtract(*,2) extracts only line features, ST_LineMerge then merges these
 --  multigeometries to single geometries
-GROUP BY(name,class,ref,brunnel,oneway,access,layer);
+GROUP BY(name,class,subclass,ref,brunnel,oneway,access,layer,bicycle);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1133,10 +1133,7 @@ SELECT
 		NULL::int AS agg_stop, -- TODO: not implemented
 		level AS level,layer,
 		(CASE WHEN indoor IN ('yes','1') THEN 1 END) AS indoor,
-		ST_AsMVTGeom(
-      (CASE WHEN tablefrom = 'point' THEN way
-      WHEN tablefrom='polygon' THEN ST_Centroid(way) END)
-      ,bounds_geom) AS geom
+		ST_AsMVTGeom(way,bounds_geom) AS geom
 	FROM (
     SELECT
 {% if with_osm_id %} 'n'||osm_id AS osm_id, {% endif %}

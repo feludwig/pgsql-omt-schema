@@ -5,16 +5,20 @@ From a osm2pgsql-imported rendering PostgreSQL+PostGIS database, serve omt-schem
 # Motivation
 
 Already running a raster rendering osm stack ? These SQL functions make it
-possible to also serve 
-[MVT](https://docs.mapbox.com/data/tilesets/guides/vector-tiles-standards/)
-vector tiles in the openmaptiles vectortile 
-[schema](https://openmaptiles.org/schema/).
+possible to also serve Mapbox
+vector tiles
+([MVT](https://docs.mapbox.com/data/tilesets/guides/vector-tiles-standards/))
+in the openmaptiles vectortile schema
+([omt-schema](https://openmaptiles.org/schema/)).
 This can then be used by multiple styles to render beautiful vector maps in the
 client browser.
 
 ### OMT styles
 
 A little selection of styles
+* [OSM] (https://github.com/openmaptiles/openmaptiles/tree/master/style) an adaptation
+of the raster [OSM Carto](https://github.com/gravitystorm/openstreetmap-carto) from the
+homepage of [openstreetmap](https://www.openstreetmap.org).
 * [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
 * [Positron](https://github.com/openmaptiles/positron-gl-style)
 * [MapTiler Basic](https://github.com/openmaptiles/maptiler-basic-gl-style)
@@ -37,7 +41,7 @@ would require a reimport.
 permissions. The tables are found by their suffix,
 the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 Their geometry column is called `way`
-(**planned**: just read `geometry_columns` table for the `way` column).
+(**planned**: just read `geometry_columns` table for the `way` column's name).
 
 
 # Usage
@@ -50,7 +54,7 @@ this will output some `NOTICE`s...
 
 
 At the end, a `length` with nonzero length should be generated if you have Switzerland
-maps data at Weiningen (hardcoded `z/x/y` of `16/34303/22938`), else just a `length` of `0`.
+maps data at Weiningen (hardcoded `z/x/y` of `15/17151/11469`), else just a `length` of `0`.
 
 
 If everything worked, you can:
@@ -62,12 +66,14 @@ _Function Layers_ section (`pg_tileserv` needs to detect that is exists).
 
 ### Indexes
 
-Launch the index creation: they will take up a minimal amount of disk space in the database
-and can speed up querying performance a little. On bigger databases it may take a long time
+Launch the index creation: they can speed up querying performance a little,
+and will take up a minimal amount of disk space in the database
+(about `600MB` for the planet, which is <`1%`).
+On bigger databases it may take a long time
 to run (up to 3h per piece on a planet database; around 50 of them, so up to 150h)
 
-* If you want to read them through :
-`python3 run.py 'dbname=gis port=5432 user=user' --index-print`
+* If you want to read them through before:
+* `python3 run.py 'dbname=gis port=5432 user=user' --index-print`
 
 
 `python3 run.py 'dbname=gis port=5432 user=user' --index`
@@ -109,6 +115,18 @@ more at zooms 16, 17, 18, 19, 20, 21 and 22 (the vector tile limit).
 
 
 The server does not need to generate or cache any data for these z16+ levels as well.
+
+### Pre-rendering
+
+The included script [mktiles.py](mktiles.py) can generate lower-zoom tiles into a directory.
+Lower-zoom tiles contain data that changes rarely so they don't need to be rendered live.
+
+
+These lower zoom tiles also need to query a lot of data and so take longer to generate than
+is comfortable to view.
+
+
+`python3 mktiles.py 'dbname=gis port=5432' {z} {x} {y} {/path/to/file/cache}`
 
 ## Options
 
@@ -164,26 +182,30 @@ can take a long time to generate.
 
 # Disclaimer
 
-This is EXPERIMENTAL, a work in progress.
+
+Still not finished:
+* some data needs to be queried from different tables (line,point,polygon) where it
+currently only is queried from one
+* low-zoom tiles are way too big and slow
+* see `TODO` comments in sql for more
 
 ### imposm3
 
-Most guides to selfhost your own vectortiles recommend importing the database with 
+Most guides to selfhost your own vectortiles recommend importing the database with
 [imposm3](https://github.com/omniscale/imposm3).
-But I found nothing when data is already imported with `osm2pgsql`.
-These two tools produce a very different database schema, and the main
-aim of this SQL script is to adapt a subset of the `imposm3` produced
-schema for generating vectortiles, from the `osm2pgsql` schema.
-Referring to the schema as one is incorrect, because both tools powerfully
-allow configuring them.
+But I found nothing when data is already imported with `osm2pgsql` except
+for [this](https://github.com/MapServer/basemaps/blob/main/contrib/osm2pgsql-to-imposm-schema.sql)
+set of SQL tables. But those are not written with realtime rendering in mind, nor
+with updateability of the data (with `.osc` files).
 
 
-But when the database was already imported with `osm2pgsql`,
-or when the need for both mapnik.xml raster tiles and vectortiles comes up ?
-Is one supposed to host two complete copies of the same data ?
+These two tools produce a very different database table layout, and the main
+aim of this SQL script is to adapt the `osm2pgsql` produced
+tables for generating vectortiles, despite the omt-specification
+only considering data from the `imposm3` schema.
 
 
-Also, this "adapting" from one schema to the other is difficult and will always be a
+Also, this "adapting" from one table layout to the other is difficult and will always be a
 moving target. For now this script is best-effort and I try do document
 differences. Changes requiring significant performance loss will probably not
 be considered.
@@ -191,30 +213,20 @@ be considered.
 ### Performance
 
 This is a balance between tile serving speed and disk usage/efficiency.
-The aim here is to make already `osm2pgsql`-imported databases 
-useable in the same situation as `imposm3`-imported ones (in addition to all
-other situations they are useful in).
 
 
-Indexes speed queries up by a little, but because they don't use that much space
+Indexes only speed queries up by a little, but because they don't use that much space
 compared to data, I still recommend using them.
 
 ### Feature parity
 
-- Geometries are currently just returned from the database. This is very wasteful
-for low zooms where a `ST_SimplifyPreserveTopology(geometry,200)` should be used.
-
 
 - Which features should be hidden in which order when zooming out is somewhat
 unclear from the documentations. For now I go with what looks right.
-
-
-### Aggregation
-
-- The layer `transportation` is currently being aggregated on its geometries,
+- Aggregation: The layer `transportation` is currently being aggregated on its geometries,
 and it shows to be an excellent way to reduce tilesize.
-- For the `buildings` layer as well: when zooming out, buildings, before all disappearing,
-start to cluster into bigger chunks;
+- Missing Feature: For the `buildings` layer as well: when zooming out, buildings, before all disappearing,
+start to cluster into bigger chunks,
 but only when there are a lot of buildings around.
 
 
@@ -222,8 +234,8 @@ but only when there are a lot of buildings around.
 
 - The OSM Bright style uses `"name:latin"` and `"name:nonlatin"`, which is not in the spec.
 Currently, `name_en` and `name_de` are not created, and `name` is used for `"name:latin"`
-unconditionally (this is temporary).
-
+unconditionally (this is temporary, but configurable in the template).
+- `ele_ft` column is omitted
 
 - Also, the `rank` column is not clearly documented and I am just tweaking numbers untils it looks
 about right, for now.

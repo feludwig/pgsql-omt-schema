@@ -284,7 +284,8 @@ def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,command:str) :
             print(sql_index_command(d,command))
             raise err
         while len(access.notices)>0 :
-            print(access.notices.pop(0))
+            line=access.notices.pop(0).strip().replace('\n','\n\t')
+            print(line)
         print(command,d['name'],'in',(datetime.datetime.now()-start_one))
     if command=='names' :
         return names
@@ -301,7 +302,9 @@ def run_sql_script(c:psycopg2.extensions.cursor,sql_script:str) :
             print('REMINDER: "_v" for the value of the column')
             print(end='\033[0m')
         raise err
-    print(*access.notices)
+    while len(access.notices)>0 :
+        line=access.notices.pop(0).strip().replace('\n','\n\t')
+        print(line)
 
 def render_template_file(filename:str) :
     t=e.get_template(filename)

@@ -84,6 +84,8 @@ aliases={
     'polygon':{
         'housenumber':'addr:housenumber',
         'aerodrome_type':'aerodrome:type',
+        'building_levels':'building:levels',
+        'building_part':'building:part',
     },
 }
 
@@ -108,7 +110,8 @@ need_columns={
         'aerialway', 'shipway', 'man_made', 'public_transport',
         'network', 'oneway', 'ramp', 'service', 'toll',
         'expressway', 'layer', 'level', 'indoor','country_code_fips',
-        'iso3166_1_alpha2','iso3166_1', 'housenumber',
+        'iso3166_1_alpha2','iso3166_1', 'housenumber', 'disputed',
+        'disputed_name',
 
         'way', 'tags', 'osm_id',
     ),
@@ -120,7 +123,8 @@ need_columns={
         'admin_level', 'bridge', 'tunnel', 'ford',
         'water', 'intermittent', 'natural', 'covered',
         'ref','aeroway', 'aerodrome_type', 'iata', 'icao',
-        'ele', 'wetland', 'housenumber',
+        'ele', 'wetland', 'housenumber', 'building_levels',
+        'building_part', 'min_height', 'height', 'location',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

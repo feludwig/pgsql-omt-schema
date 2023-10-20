@@ -17,6 +17,11 @@ class GeoTable() :
             need_columns:typing.Collection[str],
             aliases:typing.Dict[str,str]) :
         self.aliases=aliases
+        self.reverse_aliases={v:k for k,v in aliases.items()}
+        aliased_need_columns=[]
+        for i in need_columns :
+            if i in self.aliases :
+                aliased_need_columns.append(self.aliases[i])
         self.table_oid=table_oid
         c.execute(c.mogrify('''SELECT
             (SELECT nspname FROM pg_namespace WHERE oid=relnamespace),relname
@@ -28,21 +33,30 @@ class GeoTable() :
         c.execute(q)
 
         for (colname,coltype,) in c.fetchall() :
-            if colname in need_columns :
-                self.__dict__[colname]=f'{self.table_name}."{self.aliased(colname)}" AS {colname}'
-                self.__dict__[colname+'_v']=f'{self.table_name}."{self.aliased(colname)}"'
-                self.__dict__[colname+'_ne']=f'({self.table_name}."{self.aliased(colname)}" IS NULL)'
+            if colname in need_columns or colname in aliased_need_columns:
+                k=self.refer(colname)
+                self.__dict__[k]=f'{self.table_name}."{self.aliased(colname)}" AS {self.refer(colname)}'
+                self.__dict__[k+'_v']=f'{self.table_name}."{self.aliased(colname)}"'
+                self.__dict__[k+'_ne']=f'({self.table_name}."{self.aliased(colname)}" IS NULL)'
 
         tags_column=f'{self.table_name}."tags"'
         for colname in need_columns :
             if colname not in self.__dict__ :
-                self.__dict__[colname]='('+tags_column+f"->'{self.aliased(colname)}') AS {colname}"
-                self.__dict__[colname+'_v']='('+tags_column+f"->'{self.aliased(colname)}')"
-                self.__dict__[colname+'_ne']='(NOT ('+tags_column+f"?'{self.aliased(colname)}'))"
+                k=self.refer(colname)
+                self.__dict__[k]='('+tags_column+f"->'{self.aliased(colname)}') AS {self.refer(colname)}"
+                self.__dict__[k+'_v']='('+tags_column+f"->'{self.aliased(colname)}')"
+                self.__dict__[k+'_ne']='(NOT ('+tags_column+f"?'{self.aliased(colname)}'))"
 
     def aliased(self,n) :
         if n in self.aliases :
             return self.aliases[n]
+        return n
+
+    def refer(self,n) :
+        ''' Reverse-resolve from n the aliased name, get the reference name
+        '''
+        if n in self.reverse_aliases :
+            return self.reverse_aliases[n]
         return n
 
     def __getattr__(self,k) :

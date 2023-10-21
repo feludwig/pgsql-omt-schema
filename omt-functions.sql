@@ -214,7 +214,7 @@ LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_text_to_int_null(data text) RETURNS integer
 AS $$
 SELECT CASE
-  WHEN data~E'^\\d$' THEN data::integer
+  WHEN data~E'^\\d+$' THEN data::integer
   ELSE NULL END;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;

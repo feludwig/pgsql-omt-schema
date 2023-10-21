@@ -63,7 +63,7 @@ class Writer(threading.Thread) :
             print(f'{z}/{x}/{y}.{format}',bs_written,'bytes')
 
 
-access=psycopg2.connect(sys.argv[1])
+access=psycopg2.connect(dbaccess)
 ts=[Writer(access.cursor()) for i in range(5)]
 
 start=time.time()

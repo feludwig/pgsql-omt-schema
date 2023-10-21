@@ -16,7 +16,7 @@ client browser.
 ### OMT styles
 
 A little selection of styles
-* [OSM] (https://github.com/openmaptiles/openmaptiles/tree/master/style) an adaptation
+* [OSM](https://github.com/openmaptiles/openmaptiles/tree/master/style) an adaptation
 of the raster [OSM Carto](https://github.com/gravitystorm/openstreetmap-carto) from the
 homepage of [openstreetmap](https://www.openstreetmap.org).
 * [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
@@ -37,18 +37,23 @@ Maybe this can all be summarized in a `.style` file for osm2pgsql; but applying 
 would require a reimport.
 
 * Tables `*_point`, `*_line` and `*_polygon` exist,
- and you have `SELECT`, `CREATE/DROP TYPE`, `CREATE/DROP INDEX`, and `CREATE OR REPLACE FUNCTION`
-permissions. The tables are found by their suffix,
+ and you have these permissions:
+  - `SELECT`,
+  - `CREATE/DROP TYPE`,
+  - `CREATE/DROP INDEX`,
+  - `CREATE OR REPLACE FUNCTION`, and
+  - `CREATE/DROP (MATERIALIZED) VIEW`
+* The tables are found **by suffix**,
 the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
-Their geometry column is called `way`
-(**planned**: just read `geometry_columns` table for the `way` column's name).
+* All concerned geometry tables have their geometry column called `way`
+  - (**planned**: just read `geometry_columns` table for the `way` column's name).
 
 
 # Usage
 
 ### Create the SQL functions
 
-`python3 run.py 'dbname=gis port=5432 user=user'`
+`python3 run.py 'dbname=gis port=5432'`
 
 this will output some `NOTICE`s...
 
@@ -57,7 +62,7 @@ At the end, a `length` with nonzero length should be generated if you have Switz
 maps data at Weiningen (hardcoded `z/x/y` of `15/17151/11469`), else just a `length` of `0`.
 
 
-If everything worked, you can:
+### `pg_tileserv`
 * install
 [pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
 and give it the database connection configuration.
@@ -66,17 +71,17 @@ _Function Layers_ section (`pg_tileserv` needs to detect that is exists).
 
 ### Indexes
 
-Launch the index creation: they can speed up querying performance a little,
+Then launch the index creation: they can speed up querying performance a little,
 and will take up a minimal amount of disk space in the database
-(about `600MB` for the planet, which is <`1%`).
+(about `600MB` for the planet, which is `<1%`).
 On bigger databases it may take a long time
 to run (up to 3h per piece on a planet database; around 50 of them, so up to 150h)
 
 * If you want to read them through before:
-* `python3 run.py 'dbname=gis port=5432 user=user' --index-print`
+* `python3 run.py 'dbname=gis port=5432' --index-print`
 
 
-`python3 run.py 'dbname=gis port=5432 user=user' --index`
+`python3 run.py 'dbname=gis port=5432' --index`
 
 ### Add tile url
 
@@ -122,32 +127,32 @@ The included script [mktiles.py](mktiles.py) can generate lower-zoom tiles into 
 Lower-zoom tiles contain data that changes rarely so they don't need to be rendered live.
 
 
-These lower zoom tiles also need to query a lot of data and so take longer to generate than
-is comfortable to view.
+These lower zoom tiles also need to query a lot of data and so take multiple seconds per tile
+to generate, this is not comfortable for viewing.
 
 
 `python3 mktiles.py 'dbname=gis port=5432' {z} {x} {y} {/path/to/file/cache}`
 
 ## Options
 
-* `python3 run.py 'dbname=... user=...' --print` will just print the compiled template and not run anything
-(Though it will connect to the database and crash if that fails)
+* `python3 run.py 'dbname=... ' --print` will just print the compiled template and not run anything
+(Though it will connect to the database to read which columns exist or not)
 
-* `python3 run.py 'dbname=... user=...' --index` **Work in progress, not yet functional** will compile the template,
-and generate indexes on the database for speeding up lookup times during rendering. Warning: this will use some space
-in the database, and re-running will regenerate indexes from start.
+* `python3 run.py 'dbname=... ' --index` will compile the template
+and generate indexes on the database for speeding up lookup times during rendering.
+Re-running will skip exising indexes (use `--index-drop` before to delete them).
+Info: this will use some space in the database.
 
 
 # Contours
 
-Not the omt schema, but still a rich addition to any map: elevation represented as same-elevation contour lines.
+Not the omt schema, but still a rich addition to any map: elevation, represented as same-elevation contour lines.
 
-## Motivation
 
 On a just somewhat related note: The `contours-function.sql` creates a `pg_tileserv`
 compatible sql function that returns data from a contours lines database
 ([setup guide](https://wiki.openstreetmap.org/wiki/Contour_relief_maps_using_mapnik#The_PostGIS_approach)).
-The supplied `contours.json` is a simple style for that, adapted from the `contours.xml`
+The supplied [`contours.json`](contours.json) is a simple style for that, adapted from the `contours.xml`
 in the guide.
 
 ## Javascript
@@ -186,6 +191,8 @@ can take a long time to generate.
 Still not finished:
 * some data needs to be queried from different tables (line,point,polygon) where it
 currently only is queried from one
+* `run.py` argparse clean up CLI API
+* `run.py` add template configuration beyond just editing the source
 * low-zoom tiles are way too big and slow
 * see `TODO` comments in sql for more
 
@@ -237,7 +244,7 @@ Currently, `name_en` and `name_de` are not created, and `name` is used for `"nam
 unconditionally (this is temporary, but configurable in the template).
 - `ele_ft` column is omitted
 
-- Also, the `rank` column is not clearly documented and I am just tweaking numbers untils it looks
+- The `rank` column is not clearly documented and I am just tweaking numbers untils it looks
 about right, for now.
 
 

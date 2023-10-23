@@ -31,6 +31,7 @@
 --  *check 5432 database: working well
 --  * INDEXer: hardcode the way_area conditions away and INDEX ON GIST(way), way_area
 --    this should be nicer than all the way_area>24e3, way_area>360e3 etc.. separate indexes...
+--  * transportation separate transportation_name layer earlier, in the aggregation phase
 
 -- zoom filtering:
 --  water features filter out by area
@@ -284,8 +285,8 @@ RETURNS setof {{omt_typ_pref}}_landuse
 AS $$
 SELECT
 {% if with_osm_id %}
-  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
-    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
+  string_agg(CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END,',') AS osm_id,
 {% endif %}
   (CASE
     WHEN {{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
@@ -298,7 +299,7 @@ SELECT
     WHEN {{polygon.place_v}} IN ('suburbquarter','neighbourhood') THEN {{polygon.place_v}}
     WHEN {{polygon.waterway_v}} IN ('dam') THEN {{polygon.waterway_v}}
   END) AS class,
-  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting({{polygon.way_v}}))),bounds_geom) AS geom
 FROM {{polygon.table_name}}
 WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
       'industrial','garages','retail')
@@ -316,7 +317,8 @@ WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','reside
     (z>=06 AND {{polygon.way_area_v}}>6e6) OR
     (z>=05 AND {{polygon.way_area_v}}>24e6) OR
     (z>=04 AND {{polygon.way_area_v}}>96e6)
-  );
+  )
+GROUP BY(class);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -394,7 +396,7 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landcover(bounds_geom geometry,z in
 RETURNS setof {{omt_typ_pref}}_landcover
 AS $$
 SELECT
-{% if with_osm_id %} string_agg(osm_id,',') AS osm_id, {% endif %}
+{% if with_osm_id %} osm_id, {% endif %}
   ( CASE -- resolve the class from the subclass
     WHEN subclass IN ('farmland', 'farm', 'orchard', 'vineyard', 'plant_nursery' ) THEN 'farmland'
     WHEN subclass IN ('glacier', 'ice_shelf' ) THEN 'ice'
@@ -407,8 +409,7 @@ SELECT
       'saltern', 'tidalflat', 'saltmarsh', 'mangrove' ) THEN 'wetland'
     WHEN subclass IN ('beach', 'sand', 'dune' ) THEN 'sand'
   END ) AS class,subclass,
-  -- well this seems to work, GROUP BY twice!
-  ST_AsMVTGeom(ST_Union(way_multipoly),bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (SELECT
 {% if with_osm_id %}
   string_agg(CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
@@ -424,7 +425,7 @@ FROM (SELECT
         'saltmarsh','mangrove') THEN {{polygon.wetland_v}}
       ELSE NULL
     END ) AS subclass,
-  unnest(ST_ClusterIntersecting(way)) AS way_multipoly
+  ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))) AS way
   FROM {{polygon.table_name}}
   WHERE ({{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
     'grass','grassland','meadow','forest','village_green','recreation_ground')
@@ -443,9 +444,8 @@ FROM (SELECT
     (z>=05 AND {{polygon.way_area_v}}>24e6) OR
     (z>=04 AND {{polygon.way_area_v}}>96e6)
   )
-  GROUP BY({{polygon.wetland_v}},{{polygon.landuse_v}},{{polygon.leisure_v}},{{polygon.natural_v}})
+  GROUP BY(subclass)
 ) AS foo
-GROUP BY(class,subclass);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

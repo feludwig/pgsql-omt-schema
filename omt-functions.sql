@@ -1,21 +1,24 @@
 
 -- TEMPLATE usage:
 -- need to define variables in run.py, then
--- SYNTAX {% if with_osm_id %} THEN SQL STATEMENT {% else %} ELSE SQL STATEMENT {% endif %}
+-- syntax is: {% if with_osm_id %} SQL STATEMENT1 {% else %} SQL STATEMENT2 {% endif %}
 --    where with_osm_id is a boolean variable
--- other SYNTAX {{ omt_func_pref }}
+-- other syntax: {{ omt_func_pref }}
 --    where omt_func_pref is a text variable
 
+-- WARNING: only one curly brace pair used in this explanation to not confuse templating engine, use 2 pairs
 -- VARIABLES available :
 --  {point} the table storing all point features, default osm2pgsql name planet_osm_point
---    -> {point.table_name} in a FROM {},
---    -> {point.<column_name>} in a SELECT foo, {} FROM ...
---        this becomes "(tags->'col') AS col" when col was not detected in db, and "col" otherwise
---    -> {point.<column_name>_v} in a SELECT ({}+1) AS computed_value [v for "value"]
+--    -> FROM {point.table_name}
+--    -> SELECT {point.<column_name>} FROM ...
+--        this becomes "(tags->'col') AS col" when col was not detected in db, and "col AS col" otherwise
+--    -> WHERE {point.<column_name>_v}*2==7 AND ... [v for "value"] removes the "AS"
 --        this becomes "(tags->'col')" when col was not detected, and "col" otherwise
+--    -> WHERE {point.<column_name>_ne} OR ... [ne for "not exists"] tests IS NULL
+--        this becomes "(NOT (tags?'col'))" when col was not detected, and "col IS NULL" otherwise
 --  {line} the table storing all line features, default osm2pgsql name planet_osm_line
 --    -> exaclty like {point}, there is a {line.table_name} and
---    -> {line.<column_name>} and {line.<column_name>_v}
+--    -> {line.<column_name>}, {line.<column_name>_v} {line.<column_name>_ne}
 --  {polygon} the table storing all line features, default osm2pgsql name planet_osm_polygon
 --    -> exaclty like {point}, there is a {polygon.table_name} and
 --    -> {polygon.<column_name>} and {polygon.<column_name>_v}
@@ -132,12 +135,14 @@ CREATE TYPE {{omt_typ_pref}}_housenumber AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_landcover AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   class text,
   subclass text,
   geom geometry
 );
 
 CREATE TYPE {{omt_typ_pref}}_landuse AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   class text,
   geom geometry
 );
@@ -278,6 +283,10 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landuse(bounds_geom geometry,z inte
 RETURNS setof {{omt_typ_pref}}_landuse
 AS $$
 SELECT
+{% if with_osm_id %}
+  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
+{% endif %}
   (CASE
     WHEN {{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
       'industrial','garages','retail') THEN {{polygon.landuse_v}}
@@ -298,17 +307,15 @@ WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','reside
   OR {{polygon.amenity_v}} IN ('bus_station','school','university','kindergarden','college',
       'library','hospital','grave_yard') OR {{polygon.waterway_v}} IN ('dam')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=14 AND {{polygon.way_area_v}}>1500) OR
-    (z>=13 AND {{polygon.way_area_v}}>6000) OR
-    (z>=12 AND {{polygon.way_area_v}}>24e3) OR
-    (z>=11 AND {{polygon.way_area_v}}>96e3) OR
-    (z>=10 AND {{polygon.way_area_v}}>384e3) OR
-    (z>=09 AND {{polygon.way_area_v}}>1536e3) OR
-    (z>=08 AND {{polygon.way_area_v}}>6e6) OR
-    (z>=07 AND {{polygon.way_area_v}}>24e6) OR
-    (z>=06 AND {{polygon.way_area_v}}>96e6) OR
-    (z>=05 AND {{polygon.way_area_v}}>384e6) OR
-    (z>=04 AND {{polygon.way_area_v}}>1536e6)
+    (z>=12 AND {{polygon.way_area_v}}>1500) OR
+    (z>=11 AND {{polygon.way_area_v}}>6000) OR
+    (z>=10 AND {{polygon.way_area_v}}>24e3) OR
+    (z>=09 AND {{polygon.way_area_v}}>96e3) OR
+    (z>=08 AND {{polygon.way_area_v}}>384e3) OR
+    (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
+    (z>=06 AND {{polygon.way_area_v}}>6e6) OR
+    (z>=05 AND {{polygon.way_area_v}}>24e6) OR
+    (z>=04 AND {{polygon.way_area_v}}>96e6)
   );
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -328,14 +335,15 @@ SELECT
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (
   SELECT
-{% if with_osm_id %} ('n'||osm_id) AS osm_id, {% endif %}
+{% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
     {{point.name}},{{point.aeroway_v}},{{point.aerodrome_type}},
     {{point.iata}},{{point.icao}},{{point.ele}},{{point.way}}
   FROM {{point.table_name}}
   UNION ALL
   SELECT
 {% if with_osm_id %}
-    (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
 {% endif %}
     {{polygon.name}},{{polygon.aeroway_v}},{{polygon.aerodrome_type}},
     {{polygon.iata}},{{polygon.icao}},{{polygon.ele}},{{polygon.way}}
@@ -354,14 +362,15 @@ SELECT
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (
   SELECT
-{% if with_osm_id %} ('n'||osm_id) AS osm_id, {% endif %}
+{% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
     {{point.ref}},{{point.aeroway_v}} AS class,{{point.way}}
   FROM {{point.table_name}}
   WHERE {{point.aeroway_v}} IN ('gate')
   UNION ALL
   SELECT
 {% if with_osm_id %}
-  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
+    WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
 {% endif %}
     {{line.ref}},{{line.aeroway_v}} AS class,{{line.way}}
   FROM {{line.table_name}}
@@ -369,7 +378,8 @@ FROM (
   UNION ALL
   SELECT
 {% if with_osm_id %}
-  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
 {% endif %}
     {{polygon.ref}},{{polygon.aeroway_v}} AS class,{{polygon.way}}
   FROM {{polygon.table_name}}
@@ -384,6 +394,7 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landcover(bounds_geom geometry,z in
 RETURNS setof {{omt_typ_pref}}_landcover
 AS $$
 SELECT
+{% if with_osm_id %} string_agg(osm_id,',') AS osm_id, {% endif %}
   ( CASE -- resolve the class from the subclass
     WHEN subclass IN ('farmland', 'farm', 'orchard', 'vineyard', 'plant_nursery' ) THEN 'farmland'
     WHEN subclass IN ('glacier', 'ice_shelf' ) THEN 'ice'
@@ -396,8 +407,13 @@ SELECT
       'saltern', 'tidalflat', 'saltmarsh', 'mangrove' ) THEN 'wetland'
     WHEN subclass IN ('beach', 'sand', 'dune' ) THEN 'sand'
   END ) AS class,subclass,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-  FROM (SELECT
+  -- well this seems to work, GROUP BY twice!
+  ST_AsMVTGeom(ST_Union(way_multipoly),bounds_geom) AS geom
+FROM (SELECT
+{% if with_osm_id %}
+  string_agg(CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END,',') AS osm_id,
+{% endif %}
     ( CASE
       WHEN {{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
         'grass','grassland','meadow','forest','village_green','recreation_ground') THEN {{polygon.landuse_v}}
@@ -407,7 +423,8 @@ SELECT
       WHEN {{polygon.wetland_v}} IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat',
         'saltmarsh','mangrove') THEN {{polygon.wetland_v}}
       ELSE NULL
-    END ) AS subclass,way
+    END ) AS subclass,
+  unnest(ST_ClusterIntersecting(way)) AS way_multipoly
   FROM {{polygon.table_name}}
   WHERE ({{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
     'grass','grassland','meadow','forest','village_green','recreation_ground')
@@ -416,18 +433,19 @@ SELECT
   OR {{polygon.leisure_v}} IN ('park','garden','golf_course')
   OR {{polygon.wetland_v}} IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=14 AND {{polygon.way_area_v}}>1500) OR
-    (z>=13 AND {{polygon.way_area_v}}>6000) OR
-    (z>=12 AND {{polygon.way_area_v}}>24e3) OR
-    (z>=11 AND {{polygon.way_area_v}}>96e3) OR
-    (z>=10 AND {{polygon.way_area_v}}>384e3) OR
-    (z>=09 AND {{polygon.way_area_v}}>1536e3) OR
-    (z>=08 AND {{polygon.way_area_v}}>6e6) OR
-    (z>=07 AND {{polygon.way_area_v}}>24e6) OR
-    (z>=06 AND {{polygon.way_area_v}}>96e6) OR
-    (z>=05 AND {{polygon.way_area_v}}>384e6) OR
-    (z>=04 AND {{polygon.way_area_v}}>1536e6)
-  )) AS foo;
+    (z>=12 AND {{polygon.way_area_v}}>1500) OR
+    (z>=11 AND {{polygon.way_area_v}}>6000) OR
+    (z>=10 AND {{polygon.way_area_v}}>24e3) OR
+    (z>=09 AND {{polygon.way_area_v}}>96e3) OR
+    (z>=08 AND {{polygon.way_area_v}}>384e3) OR
+    (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
+    (z>=06 AND {{polygon.way_area_v}}>6e6) OR
+    (z>=05 AND {{polygon.way_area_v}}>24e6) OR
+    (z>=04 AND {{polygon.way_area_v}}>96e6)
+  )
+  GROUP BY({{polygon.wetland_v}},{{polygon.landuse_v}},{{polygon.leisure_v}},{{polygon.natural_v}})
+) AS foo
+GROUP BY(class,subclass);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -449,10 +467,10 @@ SELECT {{omt_func_pref}}_text_to_real_null({{polygon.height_v}}) AS render_heigh
   ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
 FROM {{polygon.table_name}}
 WHERE NOT {{polygon.building_ne}}
-  AND ({{polygon.location_v}} !~ 'underground' OR {{polygon.location_ne}})
+  AND (NOT {{polygon.location_v}} ~ 'underground' OR {{polygon.location_ne}})
   AND ST_Intersects({{polygon.way_v}},bounds_geom)
   AND (
-    (z>=14 OR {{polygon.way_area_v}}>=1700) AND (z>12) -- show no buildings above z>=12
+    (z>=14 OR {{polygon.way_area_v}}>=200) AND (z>12) -- show no buildings above z>=12
   );
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -485,8 +503,8 @@ SELECT
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (
   SELECT
-{% if with_osm_id %} ('n'||osm_id) AS osm_id, {% endif %}
-    {{point.name}},{{point.ele}},{{point.way}},
+{% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
+    {{point.name}},{{point.ele_ct}},{{point.way}},
     -- score of 0 means popular item: should be shown first
     ({{point.wikipedia_ne}}::int+{{point.wikidata_ne}}::int) AS score,
     {{point.natural_v}} AS class
@@ -495,9 +513,10 @@ FROM (
   UNION ALL
   SELECT
 {% if with_osm_id %}
-  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
+    WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
 {% endif %}
-    {{line.name}},{{line.ele}},{{line.way}},
+    {{line.name}},{{line.ele_ct}},{{line.way}},
     -- score of 0 means popular item: should be shown first
     ({{line.wikipedia_ne}}::int+{{line.wikidata_ne}}::int) AS score,
     {{line.natural_v}} AS class
@@ -515,7 +534,8 @@ RETURNS setof {{omt_typ_pref}}_boundary
 AS $$
 SELECT
 {% if with_osm_id %}
-  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
+    WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
 {% endif %}
   {{line.admin_level_v}}::integer AS admin_level,
   NULL AS adm0_l,NULL AS adm0_r,
@@ -665,9 +685,10 @@ RETURNS setof {{omt_typ_pref}}_named_transportation
 AS $$
 SELECT * FROM (
   SELECT
-  {% if with_osm_id %}
-    (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
-  {% endif %}
+{% if with_osm_id %}
+  (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
+    WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
+{% endif %}
     {{line.name}},
     {{line.ref}},
   -- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
@@ -703,10 +724,10 @@ SELECT * FROM (
     END) AS class,
     (CASE
       WHEN NOT {{line.railway_ne}} THEN {{line.railway_v}}
-      WHEN (NOT {{line.highway_ne}} OR NOT {{line.public_transport_ne}})
-          AND {{line.highway_v}} IN ('path','pedestrian','footway','cycleway','steps')
-        THEN COALESCE(NULLIF({{line.public_transport_v}},''),{{line.highway_v}})
-      WHEN {{line.aerialway_v}} IS NOT NULL THEN {{line.aerialway_v}}
+      WHEN NOT {{line.public_transport_ne}} AND {{line.public_transport_v}}!=''
+        THEN {{line.public_transport_v}}
+      WHEN NOT {{line.highway_ne}} THEN {{line.highway_v}}
+      WHEN NOT {{line.aerialway_ne}} THEN {{line.aerialway_v}}
     END) AS subclass,
     (CASE WHEN {{line.route_v}} IN ('bicycle') THEN
       (CASE {{line.network_v}} WHEN 'icn' THEN 'international'
@@ -1136,7 +1157,7 @@ SELECT
 		ST_AsMVTGeom(way,bounds_geom) AS geom
 	FROM (
     SELECT
-{% if with_osm_id %} 'n'||osm_id AS osm_id, {% endif %}
+{% if with_osm_id %} 'n'||{{point.osm_id_v}} AS osm_id, {% endif %}
       {{point.name}},{{point.waterway}},{{point.building}},{{point.shop}},
       {{point.highway}},{{point.leisure}},{{point.historic}},
       {{point.railway}},{{point.sport}},{{point.office}},{{point.tourism}},
@@ -1146,7 +1167,8 @@ SELECT
     UNION ALL
     SELECT
 {% if with_osm_id %}
-  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
 {% endif %}
       {{polygon.name}},{{polygon.waterway}},{{polygon.building}},{{polygon.shop}},
       {{polygon.highway}},{{polygon.leisure}},{{polygon.historic}},

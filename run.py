@@ -31,19 +31,22 @@ class GeoTable() :
         q=c.mogrify('''SELECT attname,atttypid FROM pg_attribute
             WHERE attrelid=%s''',(table_oid,))
         c.execute(q)
+        tags_column=f'{self.table_name}."tags"'
 
         for (colname,coltype,) in c.fetchall() :
             if colname in need_columns or colname in aliased_need_columns:
                 k=self.refer(colname)
                 self.__dict__[k]=f'{self.table_name}."{self.aliased(colname)}" AS {self.refer(colname)}'
+                tg=tags_column+f"->'{self.aliased(colname)}'"
+                self.__dict__[k+'_ct']=f'COALESCE({self.table_name}."{self.aliased(colname)}",{tg}) AS {self.refer(colname)}'
                 self.__dict__[k+'_v']=f'{self.table_name}."{self.aliased(colname)}"'
                 self.__dict__[k+'_ne']=f'({self.table_name}."{self.aliased(colname)}" IS NULL)'
 
-        tags_column=f'{self.table_name}."tags"'
         for colname in need_columns :
             if colname not in self.__dict__ :
                 k=self.refer(colname)
                 self.__dict__[k]='('+tags_column+f"->'{self.aliased(colname)}') AS {self.refer(colname)}"
+                self.__dict__[k+'_ct']=self.__dict__[k]
                 self.__dict__[k+'_v']='('+tags_column+f"->'{self.aliased(colname)}')"
                 self.__dict__[k+'_ne']='(NOT ('+tags_column+f"?'{self.aliased(colname)}'))"
 
@@ -340,7 +343,9 @@ TEMPLATE_VARS={
     # WARNING: set to '' to ignore. else NEEDS to have a trailing comma
     # this is only added at the end, after the typedefed-rows have been
     #   generated. tags are not available anymore
-    'additional_name_columns':'name AS "name:latin",',
+    # for OSM-Bright: 'name AS "name:latin",',
+    # but move away from name:latin and "just" add alias in JS
+    'additional_name_columns':'',
     # other non-spec behaviour: the rank value is still filtering out items
     # on z>17 even though the spec says it SHOULD show all.
     # to force show all at z>=17, this workaround:

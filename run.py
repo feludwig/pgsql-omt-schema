@@ -32,8 +32,10 @@ class GeoTable() :
             WHERE attrelid=%s''',(table_oid,))
         c.execute(q)
         tags_column=f'{self.table_name}."tags"'
+        self.actual_columns=[]
 
         for (colname,coltype,) in c.fetchall() :
+            self.actual_columns.append(colname)
             if colname in need_columns or colname in aliased_need_columns:
                 k=self.refer(colname)
                 self.__dict__[k]=f'{self.table_name}."{self.aliased(colname)}" AS {self.refer(colname)}'
@@ -150,11 +152,14 @@ need_columns={
 #type var
 s_where_t=sqlglot.expressions.Where
 
-def resolve_aliases(s_where:s_where_t,table_simple:str)->s_where_t :
+def resolve_aliases(s_where:s_where_t,gt:GeoTable)->s_where_t :
     # check all identifiers, if any column matches then replace it with
     # the geotable's column name
-    local_alias=aliases[table_simple]
+    local_alias=gt.aliases
     for i in s_where.find_all(sqlglot.expressions.Identifier) :
+        if i.name not in gt.actual_columns and i.name in gt.__dict__ :
+            # replace "office" by "tags"->'office'
+            i.replace(sqlglot.parse_one(gt.__dict__[i.name+'_v'],dialect='postgres'))
         if i.name in local_alias :
             i.replace(sqlglot.parse_one('"'+local_alias[i.name]+'"'))
     return s_where
@@ -163,15 +168,31 @@ def remove_way_var(s_where:s_where_t)->s_where_t :
     #   * remove ... AND ST_intersects(way...)
     #       -> and replace with AND TRUE -> and simplify away
     s_intersects=[i for i in s_where.find_all(sqlglot.expressions.Anonymous) if i.name.lower()=='st_intersects']
-    if len(s_intersects)==0 :
-        #print('NO way to index over FOUND'), not very important: probably part of a subquery
+    if len(s_intersects)!=0 :
+        s_intersects[0].replace(sqlglot.expressions.TRUE)
+    try :
         return sqlglot.optimizer.simplify.simplify(s_where)
-    s_intersects[0].replace(sqlglot.expressions.TRUE)
-    return sqlglot.optimizer.simplify.simplify(s_where)
+    except ValueError :
+        return s_where
+
+def remove_way_area(s_where:s_where_t)->typing.Tuple[bool,s_where_t] :
+    rslt={'found':False} #accessible memory from inside function
+    def trsf(n) :
+        if n.key in ('gt','lt','gte','lte','eq') :
+            sub_id_names=[i.name for i in n.left.find_all(sqlglot.expressions.Identifier)]
+            sub_id_names.extend([i.name for i in n.right.find_all(sqlglot.expressions.Identifier)])
+            if 'way_area' in sub_id_names :
+                rslt['found']=True
+                return sqlglot.expressions.TRUE
+        return n
+    # can't do a oneliner because rslt['found'] needs to get written into before returning
+    r=s_where.transform(trsf,copy=True)
+    return rslt['found'],r
+
 
 def remove_z_var(s_where:s_where_t)->typing.Collection[typing.Dict[str,s_where_t]] :
-    ''' Will return a list of the multiplied WHERE along possible z-conditions
-    '''
+    """ Will return a list of the multiplied WHERE along possible z-conditions
+    """
     #   * still need to remove z dependency:
     # [...] OR ("way_area" > 1500 AND z >= 14) OR ("way_area" > 8000 AND z >= 11)
     # -> (1) [...] OR ("way_area" > 1500 AND [TRUE]) OR <--REMOVE:("way_area" > 8000 AND z >= 11)-->
@@ -214,11 +235,28 @@ def remove_z_var(s_where:s_where_t)->typing.Collection[typing.Dict[str,s_where_t
                         return sqlglot.expressions.FALSE
             return n
         one_result['s']=s_where_with_uuids.transform(trsf,copy=True)
-        one_result['s']=sqlglot.optimizer.simplify.simplify(one_result['s'])
+        try :
+            one_result['s']=sqlglot.optimizer.simplify.simplify(one_result['s'])
+        except ValueError :
+            pass
         result.append(one_result)
     return result
 
-def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing.Any]] :
+def parse_indexed_create_unique(sql_script:str,tmpl_defined:dict)->typing.Iterator[typing.Dict[str,typing.Any]] :
+    result={}
+    additional_keys=('geom','has_way_area')
+    for i in list(parse_indexed_create(sql_script,tmpl_defined)) :
+        k=(i['table'],i['where'])
+        if k not in result :
+            result[k]=[]
+        result[k].append((i['name'],[i[k] for k in additional_keys]))
+    for k,v in result.items() :
+        choice=sorted(v)[0]
+        print(choice[1])
+        yield {'table':k[0],'where':k[1],'name':choice[0],**{k:v for k,v in zip(additional_keys,choice[1])}}
+
+
+def parse_indexed_create(sql_script:str,tmpl_defined:dict)->typing.Iterator[typing.Dict[str,typing.Any]] :
     uncommented=[i if i.find('--')<0 else i[:i.index('--')] for i in sql_script.split('\n')]
     collapsed_newlines=' '.join(uncommented)
     regex_get_funcs=r'FUNCTION\s+(?P<funcname>[^\(]+)(?P<functypedef>[^\$]+)\s+AS\s+\$\$(?P<funcbody>[^\$]+)\$\$[^\$]*LANGUAGE\s+(?P<funclang>[^\s]+)\s'
@@ -234,13 +272,12 @@ def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing
             continue
 
         s_func_body=sqlglot.parse_one(func_body_str,dialect='postgres')
-        #print('BLOCK START')
-        #print(s_func_body)
-        #print('BLOCK END')
+
         for s_from in s_func_body.find_all(sqlglot.expressions.From) :
             t_name=s_from.name #table name
             t_s=t_name.split('_')[-1]
-            if t_name.find('planet_osm')>=0 :
+            if t_s in ('point','line','polygon','roads'):
+                gt=tmpl_defined[t_s]
                 # extract the WHERE corresponding to this s_from
                 # to create corresponding index on
                 # planet_osm_* USING GIST(way)
@@ -254,11 +291,13 @@ def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing
 
                 # s_where references some data that should not be indexed:
                 s_where=remove_way_var(s_where.copy())
-                s_where=resolve_aliases(s_where,t_s)
+                s_where=resolve_aliases(s_where,gt)
+                has_way_area,s_where=remove_way_area(s_where)
                 s_wheres=remove_z_var(s_where)
-                def assemble_dict(where_sql:str,z:bool,parent:str) :
+                def assemble_dict(where_sql:str,z:bool,parent:str,has_way_area:bool) :
                     r={'func':func_name,'table':t_name,
                         'where':where_sql,
+                        'has_way_area':has_way_area,
                         'geom':'way'}
                     r['name']='idx_'+r['func'].split('.')[-1]+'_'+t_s
                     if z :
@@ -271,17 +310,22 @@ def parse_indexed_create(sql_script:str)->typing.Iterator[typing.Dict[str,typing
                         if rslt=='WHERE FALSE' :
                             #simplified to the point of nothing left
                             continue
-                        yield assemble_dict(rslt,True,o_r['parent'])
+                        yield assemble_dict(rslt,True,o_r['parent'],has_way_area)
                 else :
-                    yield assemble_dict(s_where.sql(dialect='postgres'),False,None)
+                    yield assemble_dict(s_where.sql(dialect='postgres'),False,None,has_way_area)
 
 def sql_index_command(data:typing.Dict[str,str],operation:str)->str :
     if operation=='create' :
-        return f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {data['name']} ON {data['table']} USING GIST({data['geom']}) {data['where']}"
+        #one day, when multi-method crossproduct indexes are supported...
+        #if data['has_way_area'] :
+        #    r=f"CREATE INDEX IF NOT EXISTS {data['name']} "
+        #    return r+f"ON {data['table']} USING GIST({data['geom']}), GIN(way_area) {data['where']}"
+        r=f"CREATE INDEX IF NOT EXISTS {data['name']} "
+        return r+f"ON {data['table']} USING GIST({data['geom']}) {data['where']}"
     elif operation=='drop' :
         return f"DROP INDEX IF EXISTS {data['name']}"
 
-def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,command:str) :
+def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,tmpl_defined:dict,command:str) :
     ''' Parse out indexes that could be useful from the compiled template sql_script.
     command: create -> CREATE INDEX IF NOT EXISTS
     command: drop -> DROP INDEX
@@ -291,7 +335,7 @@ def run_sql_indexes(c:psycopg2.extensions.cursor,sql_script:str,command:str) :
     start=datetime.datetime.now()
     #collapse generator to get out error messages and flush the
     # annoying "applying array index offset" at the start
-    payload=list(parse_indexed_create(sql_script))
+    payload=list(parse_indexed_create_unique(sql_script,tmpl_defined))
     #also for len(payload) progress reports
     for ix,d in enumerate(payload) :
         start_one=datetime.datetime.now()
@@ -329,7 +373,7 @@ def run_sql_script(c:psycopg2.extensions.cursor,sql_script:str) :
 
 def render_template_file(filename:str) :
     t=e.get_template(filename)
-    return t.render(**TEMPLATE_VARS)
+    return t.render()
 
 
 TEMPLATE_VARS={
@@ -367,7 +411,9 @@ if __name__=='__main__' :
     e=jinja2.Environment(
         loader=jinja2.FileSystemLoader(os.path.dirname(__file__)),
     )
-    e.globals=make_global_dict(c,need_columns,aliases)
+    tmpl_defined=make_global_dict(c,need_columns,aliases)
+    tmpl_defined={**tmpl_defined,**TEMPLATE_VARS}
+    e.globals=tmpl_defined
     sql_functions_script=render_template_file('omt-functions.sql')
     sql_views_script=render_template_file('omt-views.sql')
     sql_contours_script=render_template_file('contours-function.sql')
@@ -378,17 +424,17 @@ if __name__=='__main__' :
         access.commit()
         # WARN: enable transaction-less CREATE INDEX;
         access.autocommit=True
-        run_sql_indexes(c,sql_functions_script,'create')
+        run_sql_indexes(c,sql_functions_script,tmpl_defined,'create')
     elif len(sys.argv)>2 and sys.argv[2]=='--index-drop' :
         access.commit()
         # WARN: enable transaction-less CREATE INDEX;
         access.autocommit=True
-        run_sql_indexes(c,sql_functions_script,'drop')
+        run_sql_indexes(c,sql_functions_script,tmpl_defined,'drop')
     elif len(sys.argv)>2 and sys.argv[2]=='--index-print' :
-        for d in parse_indexed_create(sql_functions_script) :
+        for d in parse_indexed_create_unique(sql_functions_script,tmpl_defined) :
             print(sql_index_command(d,'create'))
     elif len(sys.argv)>2 and sys.argv[2]=='--index-names' :
-        for n in run_sql_indexes(c,sql_functions_script,'names') :
+        for n in run_sql_indexes(c,sql_functions_script,tmpl_defined,'names') :
             print(n)
     else :
         run_sql_script(c,sql_views_script)

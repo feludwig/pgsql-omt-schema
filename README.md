@@ -75,7 +75,7 @@ Then launch the index creation: they can speed up querying performance a little,
 and will take up a minimal amount of disk space in the database
 (about `600MB` for the planet, which is `<1%`).
 On bigger databases it may take a long time
-to run (up to 3h per piece on a planet database; around 50 of them, so up to 150h)
+to run (up to 3h per piece on a planet database; around 25 of them, so up to 75h)
 
 * If you want to read them through before:
 * `python3 run.py 'dbname=gis port=5432' --index-print`
@@ -240,8 +240,12 @@ but only when there are a lot of buildings around.
 ### Out-of-specification behaviour
 
 - The OSM Bright style uses `"name:latin"` and `"name:nonlatin"`, which is not in the spec.
-Currently, `name_en` and `name_de` are not created, and `name` is used for `"name:latin"`
-unconditionally (this is temporary, but configurable in the template).
+Currently, `name_en` and `name_de` are not created, and only `name` is used.
+To create `"name:latin"`, see template definition comments.
+  * Another option to alias feature name data as "name:latin" data is to do so client-side.
+See provided [`set_name_property.js`](set_name_property.js) sample.
+
+
 - `ele_ft` column is omitted
 
 - The `rank` column is not clearly documented and I am just tweaking numbers untils it looks

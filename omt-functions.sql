@@ -1072,7 +1072,15 @@ SELECT
 		WHEN subclass IN ('atm') THEN 'atm'	
     ELSE subclass
 	END) AS class,
-	subclass,agg_stop,level,layer,indoor,geom
+  --rewrite subclass
+	(CASE
+    WHEN subclass IN ('attraction')
+      -- take only starting alphanumeric chars: stop at first '_'
+      -- eg 'cave_entrance' -> 'cave'
+      THEN (regexp_match(COALESCE(amenity,"natural",'photo'),E'[a-zA-Z0-9]+'))[1]
+    ELSE subclass
+  END) AS subclass,
+  agg_stop,level,layer,indoor,geom
 	FROM (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}
 		(CASE WHEN
@@ -1154,6 +1162,9 @@ SELECT
 		NULL::int AS agg_stop, -- TODO: not implemented
 		level AS level,layer,
 		(CASE WHEN indoor IN ('yes','1') THEN 1 END) AS indoor,
+    -- used for rewriting subclass
+    -- natural in quotes because it's also a numbertype: to not trip up postgres
+    amenity,"natural",
 		ST_AsMVTGeom(way,bounds_geom) AS geom
 	FROM (
     SELECT
@@ -1162,8 +1173,9 @@ SELECT
       {{point.highway}},{{point.leisure}},{{point.historic}},
       {{point.railway}},{{point.sport}},{{point.office}},{{point.tourism}},
       {{point.landuse}},{{point.barrier}},{{point.amenity}},{{point.aerialway}},
-      {{point.level}},{{point.indoor}},{{point.layer}},{{point.way}},
-      'point' AS tablefrom FROM {{point.table_name}}
+      {{point.level}},{{point.indoor}},{{point.layer}},{{point.natural}},
+      {{point.way}},'point' AS tablefrom
+    FROM {{point.table_name}}
     UNION ALL
     SELECT
 {% if with_osm_id %}
@@ -1174,8 +1186,9 @@ SELECT
       {{polygon.highway}},{{polygon.leisure}},{{polygon.historic}},
       {{polygon.railway}},{{polygon.sport}},{{polygon.office}},{{polygon.tourism}},
       {{polygon.landuse}},{{polygon.barrier}},{{polygon.amenity}},{{polygon.aerialway}},
-      {{polygon.level}},{{polygon.indoor}},{{polygon.layer}},{{polygon.way}},
-      'polygon' AS tablefrom FROM {{polygon.table_name}}
+      {{polygon.level}},{{polygon.indoor}},{{polygon.layer}},{{polygon.natural}},
+      {{polygon.way}},'polygon' AS tablefrom
+    FROM {{polygon.table_name}}
     ) AS layer_poi
 	WHERE (
 		waterway IN ('dock')

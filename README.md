@@ -48,6 +48,26 @@ the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 * All concerned geometry tables have their geometry column called `way`
   - (**planned**: just read `geometry_columns` table for the `way` column's name).
 
+# Status
+
+### Tile size across zoom
+
+Zoom range|Usability
+---|---
+0-8|unusable, easily surpasses 10MB/tile.
+8-11|works but too big, caching helps a bit but client-side rendering is also long
+12-15|okay, size is usually <500KB/tile mapbox recommendation and rendering is responsive
+16-22|reuses z15 overzoom: okay
+
+### Not finished
+
+* some layers' data needs to be queried from different tables (line,point,polygon) where it
+currently only is queried from one
+* `run.py` argparse clean up CLI API
+* `run.py` template configuration: just editing the source is clumsy at best
+* see `TODO` comments in sql
+* see [Disclaimer](#Disclaimer)
+
 
 # Usage
 
@@ -75,13 +95,26 @@ Then launch the index creation: they can speed up querying performance a little,
 and will take up a minimal amount of disk space in the database
 (about `600MB` for the planet, which is `<1%`).
 On bigger databases it may take a long time
-to run (up to 3h per piece on a planet database; around 25 of them, so up to 75h)
+to run (up to 1h30-2h per piece on a planet database;
+there are around 25 of them, so up to 50h)
 
 * If you want to read them through before:
 * `python3 run.py 'dbname=gis port=5432' --index-print`
 
 
 `python3 run.py 'dbname=gis port=5432' --index`
+
+
+__Note__: The index creation will block all writes to the currently indexing table.
+Change `CREATE INDEX` to `CREATE INDEX CONCURRENTLY` if you wish to still write while
+indexing. This has the tradeoff of being much slower (up to 3h per piece)
+
+
+__Note__: You can run
+```
+while sleep 1;do data="$(psql -d gis -p 5432 -c "select round((100*blocks_done)::numeric/nullif(blocks_total,0),2)::text||'%' as progress,pg_size_pretty(pg_relation_size(relid)) as tablesize,pg_size_pretty(pg_relation_size(index_relid)) as indexsize,command,phase,(select relname from pg_class where oid=index_relid) as indexname from pg_stat_progress_create_index" --csv|tail -n1)";printf '\033[2K\r%s' "${data}";done
+```
+for a live index creation progress report.
 
 ### Add tile url
 
@@ -185,16 +218,8 @@ for serving the generated vector tiles
 * _Recommended_ : a file caching server, especially for your low-zoom tiles that
 can take a long time to generate.
 
+
 # Disclaimer
-
-
-Still not finished:
-* some data needs to be queried from different tables (line,point,polygon) where it
-currently only is queried from one
-* `run.py` argparse clean up CLI API
-* `run.py` add template configuration beyond just editing the source
-* low-zoom tiles are way too big and slow
-* see `TODO` comments in sql for more
 
 ### imposm3
 
@@ -217,6 +242,22 @@ moving target. For now this script is best-effort and I try do document
 differences. Changes requiring significant performance loss will probably not
 be considered.
 
+### Generalization
+
+The process of simplifying and removing geometric features when displaying them at
+low zooms: country polygons do not need to have multiple millions of points when
+displayed at z4 where they take up around 100 pixels.
+`imposm3` does generalization by itself and stores multiple copies of the data at different
+generalization levels, but `osm2pgsql` does not. Here I attemt to craft generalization
+algorithms by hand in sql. This is not a scaleable approach and a future approach would
+be to make use of osm2pgsql's generalization features (though they are still in development
+as of 2023).
+
+
+One advantage of doing generalization like this is that the database does not store multiple
+copies of geometries (a little disk space saved, but that's not worth too much).
+
+
 ### Performance
 
 This is a balance between tile serving speed and disk usage/efficiency.
@@ -229,15 +270,23 @@ compared to data, I still recommend using them.
 
 
 - Which features should be hidden in which order when zooming out is somewhat
-unclear from the documentations. For now I go with what looks right.
-- Aggregation: The layer `transportation` is currently being aggregated on its geometries,
+unclear from the omt-schema specification. For now I go with what looks right.
+- Aggregation: The layers `transportation`,`landuse`, and `landcover`
+are currently being aggregated on theirs geometries,
 and it shows to be an excellent way to reduce tilesize.
-- Missing Feature: For the `buildings` layer as well: when zooming out, buildings, before all disappearing,
-start to cluster into bigger chunks,
+
+- Missing Feature: For the `buildings` layer as well:
+when zooming out, before all buildings disappear,
+they start to cluster into bigger chunks;
 but only when there are a lot of buildings around.
 
 
 ### Out-of-specification behaviour
+
+- `ele_ft` column is omitted
+
+- The `rank` column is not clearly documented and I am just tweaking numbers untils it looks
+about right, for now.
 
 - The OSM Bright style uses `"name:latin"` and `"name:nonlatin"`, which is not in the spec.
 Currently, `name_en` and `name_de` are not created, and only `name` is used.
@@ -245,10 +294,5 @@ To create `"name:latin"`, see template definition comments.
   * Another option to alias feature name data as "name:latin" data is to do so client-side.
 See provided [`set_name_property.js`](set_name_property.js) sample.
 
-
-- `ele_ft` column is omitted
-
-- The `rank` column is not clearly documented and I am just tweaking numbers untils it looks
-about right, for now.
 
 

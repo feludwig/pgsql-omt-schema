@@ -252,7 +252,6 @@ def parse_indexed_create_unique(sql_script:str,tmpl_defined:dict)->typing.Iterat
         result[k].append((i['name'],[i[k] for k in additional_keys]))
     for k,v in result.items() :
         choice=sorted(v)[0]
-        print(choice[1])
         yield {'table':k[0],'where':k[1],'name':choice[0],**{k:v for k,v in zip(additional_keys,choice[1])}}
 
 

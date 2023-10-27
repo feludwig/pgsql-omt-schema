@@ -93,6 +93,7 @@ aliases={
     'point':{
         'housenumber':'addr:housenumber',
         'aerodrome_type':'aerodrome:type',
+        'tower_type':'tower:type',
     },
     'line':{
         'housenumber':'addr:housenumber',
@@ -105,6 +106,7 @@ aliases={
         'aerodrome_type':'aerodrome:type',
         'building_levels':'building:levels',
         'building_part':'building:part',
+        'tower_type':'tower:type',
     },
 }
 
@@ -116,7 +118,7 @@ need_columns={
         'waterway', 'building', 'shop', 'highway',
         'leisure', 'historic', 'indoor', 'aerodrome_type',
         'aeroway', 'iata', 'icao', 'wikipedia', 'wikidata',
-        'ele', 'natural', 'ref',
+        'ele', 'natural', 'ref', 'man_made', 'tower_type',
 
         'way', 'tags', 'osm_id',
     ),
@@ -144,6 +146,7 @@ need_columns={
         'ref','aeroway', 'aerodrome_type', 'iata', 'icao',
         'ele', 'wetland', 'housenumber', 'building_levels',
         'building_part', 'min_height', 'height', 'location',
+        'man_made', 'tower_type',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),
@@ -374,6 +377,23 @@ def render_template_file(filename:str) :
     t=e.get_template(filename)
     return t.render()
 
+def print_stats(c:psycopg2.extensions.cursor) :
+    cols=[col.name for col in c.description]
+    data=c.fetchall()
+    print_table(data,cols)
+
+def print_table(data,headers) :
+    maxwidths=[len(c) for c in headers]
+    last_ix=len(maxwidths)-1
+    for line in data :
+        for ix,m in enumerate(maxwidths) :
+            if len(str(line[ix]))>m :
+                maxwidths[ix]=len(str(line[ix]))
+    for ix,h in enumerate(headers) :
+        print(' '+h.ljust(maxwidths[ix],' '),end=' |' if ix!=last_ix else '\n')
+    for line in data :
+        for ix,td in enumerate(line) :
+            print(' '+str(td).ljust(maxwidths[ix],' '),end=' |' if ix!=last_ix else '\n')
 
 TEMPLATE_VARS={
     # include osm_ids in some layers: useful for
@@ -438,7 +458,5 @@ if __name__=='__main__' :
     else :
         run_sql_script(c,sql_views_script)
         run_sql_script(c,sql_functions_script)
-        cols=[col.name for col in c.description]
-        while (row:=c.fetchone())!=None :
-            print({k:v for k,v in zip(cols,row)})
+        print_stats(c)
         c.execute('COMMIT;')

@@ -1062,6 +1062,8 @@ SELECT
 		WHEN subclass IN ('hospital', 'nursing_home', 'clinic') THEN 'hospital'
 		WHEN subclass IN ('grave_yard', 'cemetery') THEN 'cemetery'
 		WHEN subclass IN ('attraction', 'viewpoint') THEN 'attraction'
+      --EXTENSION
+    WHEN (regexp_match(subclass,'^[a-zA-Z0-9]+'))[1] IN ('tower') THEN 'attraction'
 		WHEN subclass IN ('biergarten', 'pub') THEN 'beer'
 		WHEN subclass IN ('music', 'musical_instrument') THEN 'music'
 		WHEN subclass IN ('american_football', 'stadium', 'soccer') THEN 'stadium'
@@ -1077,7 +1079,7 @@ SELECT
     WHEN subclass IN ('attraction')
       -- take only starting alphanumeric chars: stop at first '_'
       -- eg 'cave_entrance' -> 'cave'
-      THEN (regexp_match(COALESCE(amenity,"natural",'photo'),E'[a-zA-Z0-9]+'))[1]
+      THEN (regexp_match(COALESCE(amenity,"natural",man_made,'photo'),E'^[a-zA-Z0-9]+'))[1]
     ELSE subclass
   END) AS subclass,
   agg_stop,level,layer,indoor,geom
@@ -1134,6 +1136,7 @@ SELECT
 		WHEN office IN ('diplomatic') THEN office
 		WHEN landuse IN ('basin','brownfield','cemetery','reservoir','winter_sports')
 			THEN landuse
+    WHEN (regexp_match(man_made,'^[a-zA-Z0-9]+'))[1] IN ('tower') THEN man_made
 		WHEN tourism IN ('alpine_hut','aquarium','artwork','attraction',
 			'bed_and_breakfast','camp_site','caravan_site','chalet','gallery',
 			'guest_house','hostel','hotel','information','motel','museum','picnic_site',
@@ -1162,9 +1165,10 @@ SELECT
 		NULL::int AS agg_stop, -- TODO: not implemented
 		level AS level,layer,
 		(CASE WHEN indoor IN ('yes','1') THEN 1 END) AS indoor,
+    -- EXTENSION/IMPROVEMENT
     -- used for rewriting subclass
     -- natural in quotes because it's also a numbertype: to not trip up postgres
-    amenity,"natural",
+    amenity,"natural",man_made,
 		ST_AsMVTGeom(way,bounds_geom) AS geom
 	FROM (
     SELECT
@@ -1174,6 +1178,8 @@ SELECT
       {{point.railway}},{{point.sport}},{{point.office}},{{point.tourism}},
       {{point.landuse}},{{point.barrier}},{{point.amenity}},{{point.aerialway}},
       {{point.level}},{{point.indoor}},{{point.layer}},{{point.natural}},
+      -- EXTENSION
+      ({{point.man_made_v}}||COALESCE('_'||{{point.tower_type_v}},'')) AS man_made,
       {{point.way}},'point' AS tablefrom
     FROM {{point.table_name}}
     UNION ALL
@@ -1187,6 +1193,8 @@ SELECT
       {{polygon.railway}},{{polygon.sport}},{{polygon.office}},{{polygon.tourism}},
       {{polygon.landuse}},{{polygon.barrier}},{{polygon.amenity}},{{polygon.aerialway}},
       {{polygon.level}},{{polygon.indoor}},{{polygon.layer}},{{polygon.natural}},
+      -- EXTENSION
+      ({{polygon.man_made_v}}||COALESCE('_'||{{polygon.tower_type_v}},'')) AS man_made,
       {{polygon.way}},'polygon' AS tablefrom
     FROM {{polygon.table_name}}
     ) AS layer_poi
@@ -1247,6 +1255,7 @@ SELECT
 			'recycling','restaurant','school','shelter','swimming_pool','taxi','telephone',
 			'theatre','toilets','townhall','town_hall','university','veterinary','waste_basket')
 		OR aerialway IN ('station')
+    OR man_made IN ('tower')
 		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class) AS without_rank;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1283,8 +1292,8 @@ WHERE ({{polygon.covered_v}} IS NULL OR {{polygon.covered_v}} != 'yes') AND (
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION {{omt_all_func}}(z integer, x integer, y integer)
-RETURNS bytea
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_collect_all(z integer, x integer, y integer)
+RETURNS table(mvt bytea,name text,rowcount bigint)
 AS $$
 -- ST_TileEnvelope will be cached:
 -- SELECT pg_get_functiondef('st_tileenvelope'::regproc) ~ 'IMMUTABLE';
@@ -1360,43 +1369,103 @@ WITH
       geom
     FROM premvt_transportation WHERE name IS NOT NULL OR ref IS NOT NULL
   )
-SELECT string_agg(foo.mvt,''::bytea) FROM (
-  SELECT ST_AsMVT(premvt_aerodrome_label,'aerodrome_label') AS mvt
+  SELECT ST_AsMVT(premvt_aerodrome_label,'aerodrome_label') AS mvt,
+    'aerodrome_label' AS name,
+    count(*) AS rowcount
     FROM premvt_aerodrome_label UNION
-  SELECT ST_AsMVT(premvt_aeroway,'aeroway') AS mvt
+  SELECT ST_AsMVT(premvt_aeroway,'aeroway') AS mvt,
+    'aeroway' AS name,
+    count(*) AS rowcount
     FROM premvt_aeroway UNION
-  SELECT ST_AsMVT(premvt_boundary,'boundary') AS mvt
+  SELECT ST_AsMVT(premvt_boundary,'boundary') AS mvt,
+    'boundary' AS name,
+    count(*) AS rowcount
     FROM premvt_boundary UNION
-  SELECT ST_AsMVT(premvt_building,'building') AS mvt
+  SELECT ST_AsMVT(premvt_building,'building') AS mvt,
+    'building' AS name,
+    count(*) AS rowcount
     FROM premvt_building UNION
-  SELECT ST_AsMVT(premvt_housenumber,'housenumber') AS mvt
+  SELECT ST_AsMVT(premvt_housenumber,'housenumber') AS mvt,
+    'housenumber' AS name,
+    count(*) AS rowcount
     FROM premvt_housenumber UNION
-  SELECT ST_AsMVT(premvt_landcover,'landcover') AS mvt
+  SELECT ST_AsMVT(premvt_landcover,'landcover') AS mvt,
+    'landcover' AS name,
+    count(*) AS rowcount
     FROM premvt_landcover UNION
-  SELECT ST_AsMVT(premvt_landuse,'landuse') AS mvt
+  SELECT ST_AsMVT(premvt_landuse,'landuse') AS mvt,
+    'landuse' AS name,
+    count(*) AS rowcount
     FROM premvt_landuse UNION
-  SELECT ST_AsMVT(premvt_mountain_peak,'mountain_peak') AS mvt
+  SELECT ST_AsMVT(premvt_mountain_peak,'mountain_peak') AS mvt,
+    'mountain_peak' AS name,
+    count(*) AS rowcount
     FROM premvt_mountain_peak UNION
-  SELECT ST_AsMVT(premvt_park,'park') AS mvt
+  SELECT ST_AsMVT(premvt_park,'park') AS mvt,
+    'park' AS name,
+    count(*) AS rowcount
     FROM premvt_park UNION
-  SELECT ST_AsMVT(premvt_place,'place') AS mvt
+  SELECT ST_AsMVT(premvt_place,'place') AS mvt,
+    'place' AS name,
+    count(*) AS rowcount
     FROM premvt_place UNION
-  SELECT ST_AsMVT(premvt_poi,'poi') AS mvt
+  SELECT ST_AsMVT(premvt_poi,'poi') AS mvt,
+    'poi' AS name,
+    count(*) AS rowcount
     FROM premvt_poi UNION
-  SELECT ST_AsMVT(premvt_transportation_noname,'transportation') AS mvt
+  SELECT ST_AsMVT(premvt_transportation_noname,'transportation') AS mvt,
+    'transportation' AS name,
+    count(*) AS rowcount
     FROM premvt_transportation_noname UNION
-  SELECT ST_AsMVT(premvt_transportation_name,'transportation_name') AS mvt
+  SELECT ST_AsMVT(premvt_transportation_name,'transportation_name') AS mvt,
+    'transportation_name' AS name,
+    count(*) AS rowcount
     FROM premvt_transportation_name UNION
-  SELECT ST_AsMVT(premvt_water_noname,'water') AS mvt
+  SELECT ST_AsMVT(premvt_water_noname,'water') AS mvt,
+    'water' AS name,
+    count(*) AS rowcount
     FROM premvt_water_noname UNION
-  SELECT ST_AsMVT(premvt_water_name,'water_name') AS mvt
+  SELECT ST_AsMVT(premvt_water_name,'water_name') AS mvt,
+    'water_name' AS name,
+    count(*) AS rowcount
     FROM premvt_water_name UNION
-  SELECT ST_AsMVT(premvt_waterway,'waterway') AS mvt
-    FROM premvt_waterway
-) AS foo;
+  SELECT ST_AsMVT(premvt_waterway,'waterway') AS mvt,
+    'waterway' AS name,
+    count(*) AS rowcount
+    FROM premvt_waterway;
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_all_func}}_with_stats(z integer, x integer, y integer)
+RETURNS table(data bytea,pcent numeric,bytes int,pretty_bytes text,name text,rowcount bigint)
+AS $$
+WITH c AS (
+  SELECT mvt,name,rowcount FROM {{omt_func_pref}}_collect_all(z,x,y)),
+tot AS (
+  SELECT length(string_agg(c.mvt,''::bytea)) AS l,string_agg(c.mvt,''::bytea) AS data FROM c)
+SELECT mvt AS data,
+  coalesce(round(100*(length(mvt))/nullif(tot.l,0),1),0.0) AS pcent,
+  length(mvt) AS bytes,pg_size_pretty(length(mvt)::numeric) AS pretty_bytes,
+  name,rowcount
+FROM c,tot
+UNION
+SELECT tot.data AS data,100.0 AS pcent,tot.l AS bytes,
+  pg_size_pretty(tot.l::numeric) AS pretty_bytes,
+  'ALL' AS name,-1 AS rowcount
+FROM tot
+ORDER BY(bytes) DESC;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-SELECT length({{omt_all_func}}(15,17151,11469));
+CREATE OR REPLACE FUNCTION {{omt_all_func}}(z integer, x integer, y integer)
+RETURNS bytea
+AS $$
+SELECT string_agg(mvt,''::bytea) FROM {{omt_func_pref}}_collect_all(z,x,y);
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
+
+SELECT pcent,bytes,pretty_bytes,name,rowcount FROM {{omt_all_func}}_with_stats(15,17151,11469);
 

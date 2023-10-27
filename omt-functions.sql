@@ -12,18 +12,20 @@
 --    -> FROM {point.table_name}
 --    -> SELECT {point.<column_name>} FROM ...
 --        this becomes "(tags->'col') AS col" when col was not detected in db, and "col AS col" otherwise
---    -> WHERE {point.<column_name>_v}*2==7 AND ... [v for "value"] removes the "AS"
+--    -> WHERE {point.<col>_v}*2==7 AND ... [v for "value"] removes the "AS"
 --        this becomes "(tags->'col')" when col was not detected, and "col" otherwise
---    -> WHERE {point.<column_name>_ne} OR ... [ne for "not exists"] tests IS NULL
+--    -> WHERE {point.<col>_ne} OR ... [ne for "not exists"] tests IS NULL
 --        this becomes "(NOT (tags?'col'))" when col was not detected, and "col IS NULL" otherwise
+--    -> WHERE {point.<col>_e} OR ... [e for "exists"] tests IS NOT NULL
+--        opposite of <col>_ne
 --  {line} the table storing all line features, default osm2pgsql name planet_osm_line
 --    -> exaclty like {point}, there is a {line.table_name} and
---    -> {line.<column_name>}, {line.<column_name>_v} {line.<column_name>_ne}
+--    -> {line.<col>}, {line.<col>_v}, {line.<col>_e}, {line.<col>_ne}
 --  {polygon} the table storing all line features, default osm2pgsql name planet_osm_polygon
 --    -> exaclty like {point}, there is a {polygon.table_name} and
---    -> {polygon.<column_name>} and {polygon.<column_name>_v}
---  ALSO: any column name {point.<colname>_ne} ["not exists"] is a shorthand for
---    ({point.<colname>_v} is null), which gets contracted to "tags"?<colname> in case of tags
+--    -> {polygon.<col>}, {polygon.<col>_v}, {polygon.<col>_e}, {polygon.<col>_ne}
+--  ALSO: any column name {point.<colname>_tc} ["tags coalesce"] gets expanded to:
+--    COALESCE(point."colname",point."tags"->'colname') AS colname
 
 
 -- TODO:
@@ -434,15 +436,15 @@ FROM (SELECT
   OR {{polygon.leisure_v}} IN ('park','garden','golf_course')
   OR {{polygon.wetland_v}} IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=12 AND {{polygon.way_area_v}}>1500) OR
-    (z>=11 AND {{polygon.way_area_v}}>6000) OR
-    (z>=10 AND {{polygon.way_area_v}}>24e3) OR
-    (z>=09 AND {{polygon.way_area_v}}>96e3) OR
-    (z>=08 AND {{polygon.way_area_v}}>384e3) OR
-    (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
-    (z>=06 AND {{polygon.way_area_v}}>6e6) OR
-    (z>=05 AND {{polygon.way_area_v}}>24e6) OR
-    (z>=04 AND {{polygon.way_area_v}}>96e6)
+    (z>=13 AND {{polygon.way_area_v}}>1500) OR
+    (z>=12 AND {{polygon.way_area_v}}>6000) OR
+    (z>=11 AND {{polygon.way_area_v}}>24e3) OR
+    (z>=10 AND {{polygon.way_area_v}}>96e3) OR
+    (z>=09 AND {{polygon.way_area_v}}>500e3) OR
+    (z>=08 AND {{polygon.way_area_v}}>2e6) OR
+    (z>=07 AND {{polygon.way_area_v}}>8e6) OR
+    (z>=06 AND {{polygon.way_area_v}}>32e6) OR
+    (z>=05 AND {{polygon.way_area_v}}>128e6)
   )
   GROUP BY(subclass)
 ) AS foo
@@ -466,7 +468,7 @@ SELECT {{omt_func_pref}}_text_to_real_null({{polygon.height_v}}) AS render_heigh
     ELSE NULL END) AS hide_3d,
   ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
 FROM {{polygon.table_name}}
-WHERE NOT {{polygon.building_ne}}
+WHERE {{polygon.building_e}}
   AND (NOT {{polygon.location_v}} ~ 'underground' OR {{polygon.location_ne}})
   AND ST_Intersects({{polygon.way_v}},bounds_geom)
   AND (
@@ -702,10 +704,10 @@ SELECT * FROM (
           ELSE 'minor_construction' -- when OTHERs
         END)
       WHEN {{line.highway_v}} IN ('motorway','trunk','primary','secondary','tertiary',
-        'service','track','raceway') THEN {{line.highway_v}}||(CASE WHEN NOT {{line.construction_ne}}
+        'service','track','raceway') THEN {{line.highway_v}}||(CASE WHEN {{line.construction_e}}
         AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
       WHEN {{line.highway_v}} IN ('unclassified','residential','living_street') THEN 'minor'||(
-        CASE WHEN NOT {{line.construction_ne}}
+        CASE WHEN {{line.construction_e}}
         AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
       WHEN {{line.highway_v}} IN ('road') THEN 'unknown'
       WHEN {{line.highway_v}} IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
@@ -718,16 +720,16 @@ SELECT * FROM (
       -- and now non-highways
       WHEN {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular') THEN 'rail'
       WHEN {{line.railway_v}} IN ('subway','light_rail','monorail','tram') THEN 'transit'
-      WHEN NOT {{line.aerialway_ne}} THEN 'aerialway'
-      WHEN NOT {{line.shipway_ne}} THEN {{line.shipway_v}}
-      WHEN NOT {{line.man_made_ne}} THEN {{line.man_made_v}}
+      WHEN {{line.aerialway_e}} THEN 'aerialway'
+      WHEN {{line.shipway_e}} THEN {{line.shipway_v}}
+      WHEN {{line.man_made_e}} THEN {{line.man_made_v}}
     END) AS class,
     (CASE
-      WHEN NOT {{line.railway_ne}} THEN {{line.railway_v}}
-      WHEN NOT {{line.public_transport_ne}} AND {{line.public_transport_v}}!=''
+      WHEN {{line.railway_e}} THEN {{line.railway_v}}
+      WHEN {{line.public_transport_e}} AND {{line.public_transport_v}}!=''
         THEN {{line.public_transport_v}}
-      WHEN NOT {{line.highway_ne}} THEN {{line.highway_v}}
-      WHEN NOT {{line.aerialway_ne}} THEN {{line.aerialway_v}}
+      WHEN {{line.highway_e}} THEN {{line.highway_v}}
+      WHEN {{line.aerialway_e}} THEN {{line.aerialway_v}}
     END) AS subclass,
     (CASE WHEN {{line.route_v}} IN ('bicycle') THEN
       (CASE {{line.network_v}} WHEN 'icn' THEN 'international'
@@ -756,7 +758,7 @@ SELECT * FROM (
     CASE WHEN access IN ('no','private') THEN false ELSE NULL END AS access,
     (CASE
       WHEN {{line.toll_v}} IN ('no') THEN 0
-      WHEN NOT {{line.toll_ne}} THEN 1
+      WHEN {{line.toll_e}} THEN 1
       ELSE NULL
     END) AS toll,
     (CASE
@@ -967,14 +969,20 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_poi_class_rank(class text)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_poi_class_subclass_rank(class text,subclass text)
     RETURNS int AS
 $$
 SELECT CASE class
-           WHEN 'hospital' THEN 20
-           WHEN 'railway' THEN 40
+           WHEN 'hospital' THEN CASE subclass
+              WHEN 'hospital' THEN 15
+              ELSE 20 END
+           WHEN 'railway' THEN CASE subclass
+              WHEN 'station' THEN 30
+              ELSE 40 END
            WHEN 'bus' THEN 50
-           WHEN 'attraction' THEN 70
+           WHEN 'attraction' THEN CASE subclass
+              WHEN 'viewpoint' THEN 60
+              ELSE 70 END
            WHEN 'harbor' THEN 75
            WHEN 'college' THEN 80
            WHEN 'school' THEN 85
@@ -1017,7 +1025,11 @@ SELECT
   name,class,subclass,
 {% if same_rank_poi_high_zooms %} (CASE WHEN z>=15 THEN 30::int ELSE {%endif%}
   (row_number() OVER (ORDER BY ((CASE
-  WHEN name IS NOT NULL THEN -100 ELSE 0 END)+{{omt_func_pref}}_get_poi_class_rank(class)) ASC))::int
+    WHEN name IS NOT NULL THEN -100 ELSE 0
+  END)+{{omt_func_pref}}_get_poi_class_subclass_rank(class,subclass)) ASC,
+    has_wikidata DESC NULLS LAST,
+    start_date_year ASC NULLS LAST
+    ))::int
 {% if same_rank_poi_high_zooms %} END) {%endif%} AS rank,
   agg_stop,{{omt_func_pref}}_text_to_int_null(level) AS level,layer,indoor,geom FROM
 (SELECT name,
@@ -1082,7 +1094,8 @@ SELECT
       THEN (regexp_match(COALESCE(amenity,"natural",man_made,'photo'),E'^[a-zA-Z0-9]+'))[1]
     ELSE subclass
   END) AS subclass,
-  agg_stop,level,layer,indoor,geom
+  agg_stop,level,layer,indoor,has_wikidata,start_date_year,
+  geom
 	FROM (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}
 		(CASE WHEN
@@ -1169,6 +1182,7 @@ SELECT
     -- used for rewriting subclass
     -- natural in quotes because it's also a numbertype: to not trip up postgres
     amenity,"natural",man_made,
+    start_date_year,has_wikidata,
 		ST_AsMVTGeom(way,bounds_geom) AS geom
 	FROM (
     SELECT
@@ -1180,6 +1194,8 @@ SELECT
       {{point.level}},{{point.indoor}},{{point.layer}},{{point.natural}},
       -- EXTENSION
       ({{point.man_made_v}}||COALESCE('_'||{{point.tower_type_v}},'')) AS man_made,
+      substr({{point.start_date_v}},0,5)::int AS start_date_year,
+      {{point.wikidata_e}} AS has_wikidata,
       {{point.way}},'point' AS tablefrom
     FROM {{point.table_name}}
     UNION ALL
@@ -1195,6 +1211,8 @@ SELECT
       {{polygon.level}},{{polygon.indoor}},{{polygon.layer}},{{polygon.natural}},
       -- EXTENSION
       ({{polygon.man_made_v}}||COALESCE('_'||{{polygon.tower_type_v}},'')) AS man_made,
+      substr({{polygon.start_date_v}},0,5)::int AS start_date_year,
+      {{polygon.wikidata_e}} AS has_wikidata,
       {{polygon.way}},'polygon' AS tablefrom
     FROM {{polygon.table_name}}
     ) AS layer_poi
@@ -1256,7 +1274,9 @@ SELECT
 			'theatre','toilets','townhall','town_hall','university','veterinary','waste_basket')
 		OR aerialway IN ('station')
     OR man_made IN ('tower')
-		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class) AS without_rank;
+		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class
+) AS without_rank
+WHERE (z>=14) OR class IN ('hospital','railway','bus','attraction');
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

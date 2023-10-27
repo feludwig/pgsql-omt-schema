@@ -43,6 +43,7 @@ class GeoTable() :
                 self.__dict__[k+'_ct']=f'COALESCE({self.table_name}."{self.aliased(colname)}",{tg}) AS {self.refer(colname)}'
                 self.__dict__[k+'_v']=f'{self.table_name}."{self.aliased(colname)}"'
                 self.__dict__[k+'_ne']=f'({self.table_name}."{self.aliased(colname)}" IS NULL)'
+                self.__dict__[k+'_e']=f'({self.table_name}."{self.aliased(colname)}" IS NOT NULL)'
 
         for colname in need_columns :
             if colname not in self.__dict__ :
@@ -50,7 +51,8 @@ class GeoTable() :
                 self.__dict__[k]='('+tags_column+f"->'{self.aliased(colname)}') AS {self.refer(colname)}"
                 self.__dict__[k+'_ct']=self.__dict__[k]
                 self.__dict__[k+'_v']='('+tags_column+f"->'{self.aliased(colname)}')"
-                self.__dict__[k+'_ne']='(NOT ('+tags_column+f"?'{self.aliased(colname)}'))"
+                self.__dict__[k+'_e']='('+tags_column+f"?'{self.aliased(colname)}')"
+                self.__dict__[k+'_ne']=f"(NOT {self.__dict__[k+'_e']})"
 
     def aliased(self,n) :
         if n in self.aliases :
@@ -119,6 +121,7 @@ need_columns={
         'leisure', 'historic', 'indoor', 'aerodrome_type',
         'aeroway', 'iata', 'icao', 'wikipedia', 'wikidata',
         'ele', 'natural', 'ref', 'man_made', 'tower_type',
+        'start_date',
 
         'way', 'tags', 'osm_id',
     ),
@@ -146,7 +149,7 @@ need_columns={
         'ref','aeroway', 'aerodrome_type', 'iata', 'icao',
         'ele', 'wetland', 'housenumber', 'building_levels',
         'building_part', 'min_height', 'height', 'location',
-        'man_made', 'tower_type',
+        'man_made', 'tower_type', 'start_date', 'wikidata',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

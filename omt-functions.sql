@@ -1027,26 +1027,23 @@ $$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
 -- also make sure z_order AS rank is not detrimental: DO FIRST maybe it's why small villages show
 -- on low zooms
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi(bounds_geom geometry,z integer)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi_pre_rank(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_poi
 AS $$
-  -- TODO: I don't like how named pois override nearby pois, instead they should all show
-  -- logos and only at high zoom or onlick show name. see zurich towncentre and compare with
-  -- openstreetmap raster style
--- TODO: the rank copmutation and documentation are very unclear and how they are now could be better
--- additional source: https://wiki.openstreetmap.org/wiki/OpenStreetMap_Carto/Symbols#Shops_and_services
+-- additional source:
+-- https://wiki.openstreetmap.org/wiki/OpenStreetMap_Carto/Symbols#Shops_and_services
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name,class,subclass,
-{% if same_rank_poi_high_zooms %} (CASE WHEN z>=15 THEN 30::int ELSE {%endif%}
+  -- WARNING: not the final rank value, intermediary result only
   (row_number() OVER (ORDER BY ((CASE
     WHEN name IS NOT NULL THEN -100 ELSE 0
   END)+{{omt_func_pref}}_get_poi_class_subclass_rank(class,subclass)) ASC,
-    has_wikidata DESC NULLS LAST,
+    score ASC NULLS LAST,
     start_date_year ASC NULLS LAST
-    ))::int
-{% if same_rank_poi_high_zooms %} END) {%endif%} AS rank,
-  agg_stop,{{omt_func_pref}}_text_to_int_null(level) AS level,layer,indoor,geom FROM
+    ))::int AS rank,
+  agg_stop,{{omt_func_pref}}_text_to_int_null(level) AS level,layer,indoor,geom
+FROM
 (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}
 	(CASE WHEN
@@ -1109,7 +1106,7 @@ SELECT
       THEN (regexp_match(COALESCE(amenity,"natural",man_made,'photo'),E'^[a-zA-Z0-9]+'))[1]
     ELSE subclass
   END) AS subclass,
-  agg_stop,level,layer,indoor,has_wikidata,start_date_year,
+  agg_stop,level,layer,indoor,score,start_date_year,
   geom
 	FROM (SELECT name,
 {% if with_osm_id %} osm_id, {% endif %}
@@ -1197,7 +1194,7 @@ SELECT
     -- used for rewriting subclass
     -- natural in quotes because it's also a numbertype: to not trip up postgres
     amenity,"natural",man_made,
-    start_date_year,has_wikidata,
+    start_date_year,score,
 		ST_AsMVTGeom(way,bounds_geom) AS geom
 	FROM (
     SELECT
@@ -1207,10 +1204,10 @@ SELECT
       {{point.railway}},{{point.sport}},{{point.office}},{{point.tourism}},
       {{point.landuse}},{{point.barrier}},{{point.amenity}},{{point.aerialway}},
       {{point.level}},{{point.indoor}},{{point.layer}},{{point.natural}},
+      ({{point.wikipedia_ne}}::int+{{point.wikidata_ne}}::int) AS score,
       -- EXTENSION
       ({{point.man_made_v}}||COALESCE('_'||{{point.tower_type_v}},'')) AS man_made,
       {{omt_func_pref}}_get_start_date_year({{point.start_date_v}}) AS start_date_year,
-      {{point.wikidata_e}} AS has_wikidata,
       {{point.way}},'point' AS tablefrom
     FROM {{point.table_name}}
     UNION ALL
@@ -1224,10 +1221,10 @@ SELECT
       {{polygon.railway}},{{polygon.sport}},{{polygon.office}},{{polygon.tourism}},
       {{polygon.landuse}},{{polygon.barrier}},{{polygon.amenity}},{{polygon.aerialway}},
       {{polygon.level}},{{polygon.indoor}},{{polygon.layer}},{{polygon.natural}},
+      ({{polygon.wikipedia_ne}}::int+{{polygon.wikidata_ne}}::int) AS score,
       -- EXTENSION
       ({{polygon.man_made_v}}||COALESCE('_'||{{polygon.tower_type_v}},'')) AS man_made,
       {{omt_func_pref}}_get_start_date_year({{polygon.start_date_v}}) AS start_date_year,
-      {{polygon.wikidata_e}} AS has_wikidata,
       {{polygon.way}},'polygon' AS tablefrom
     FROM {{polygon.table_name}}
     ) AS layer_poi
@@ -1292,6 +1289,29 @@ SELECT
 		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class
 ) AS without_rank
 WHERE (z>=14) OR class IN ('hospital','railway','bus','attraction');
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_poi
+AS $$
+-- The rank copmutation and documentation are very unclear and how they are now could be better
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  name,class,subclass,
+{% if same_rank_poi_high_zooms %} (CASE WHEN z>=15 THEN 30::int ELSE {%endif%}
+  (row_number() OVER (ORDER BY rank ASC))::int
+{% if same_rank_poi_high_zooms %} END) {%endif%} AS rank,
+  agg_stop,level,layer,indoor,geom
+FROM (
+  SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+    name,class,subclass,rank,
+    (row_number() OVER (PARTITION BY(class)
+      ORDER BY rank ASC)) AS inclass_rank,
+    agg_stop,level,layer,indoor,geom
+  FROM {{omt_func_pref}}_poi_pre_rank(bounds_geom,z)) AS without_global_rank
+WHERE inclass_rank<=30;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1361,7 +1381,6 @@ WITH
     SELECT {{additional_name_columns}} *
     FROM {{omt_func_pref}}_poi(ST_TileEnvelope(z,x,y),z)
     ORDER BY(rank) ASC
-    LIMIT CASE WHEN z<12 THEN 100 ELSE 10000 END
   ),
   premvt_waterway AS (
     SELECT {{additional_name_columns}} *

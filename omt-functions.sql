@@ -30,11 +30,18 @@
 
 -- TODO:
 --  *move all table names to templated table names
---  *check 5432 database: working well
 --  * INDEXer: hardcode the way_area conditions away and INDEX ON GIST(way), way_area
 --    this should be nicer than all the way_area>24e3, way_area>360e3 etc.. separate indexes...
+--  * boundary: read from matview country_boundaries
 --  * transportation separate transportation_name layer earlier, in the aggregation phase
---  * poi sophisticated filtering PARTITION BY class, eg: among all hospitals, take only the 5 biggest
+--  * poi sophisticated filtering PARTITION BY class,
+--    eg: among all hospitals, take only the 5 biggest
+--  * landcover: ST_SimplifyPreserveTopology works well, find the correct exponential factor
+--    (it's not 4 !..?)
+--    -> THEN do the same on landuse, water and other aerial big layers
+--  * water, mountain_peak by-zoom FILTERING!
+--  * FORALL layers: osm_id aggregation: somehow only take some ids?
+--    -> string_agg(DISTINCT osm_id ORDER BY way_area DESC LIMIT 5,',')
 
 -- zoom filtering:
 --  water features filter out by area
@@ -426,7 +433,15 @@ SELECT
       'saltern', 'tidalflat', 'saltmarsh', 'mangrove' ) THEN 'wetland'
     WHEN subclass IN ('beach', 'sand', 'dune' ) THEN 'sand'
   END ) AS class,subclass,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom(CASE
+    WHEN z>=12 THEN way
+    WHEN z>=11 THEN ST_SimplifyPreserveTopology(way,25)
+    WHEN z>=10 THEN ST_SimplifyPreserveTopology(way,100)
+    WHEN z>=09 THEN ST_SimplifyPreserveTopology(way,300)
+    WHEN z>=08 THEN ST_SimplifyPreserveTopology(way,1000)
+    WHEN z>=07 THEN ST_SimplifyPreserveTopology(way,3e3)
+    ELSE ST_SimplifyPreserveTopology(way,9e3)
+    END,bounds_geom) AS geom
 FROM (SELECT
 {% if with_osm_id %}
   string_agg(CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
@@ -453,13 +468,13 @@ FROM (SELECT
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
     (z>=13 AND {{polygon.way_area_v}}>1500) OR
     (z>=12 AND {{polygon.way_area_v}}>6000) OR
-    (z>=11 AND {{polygon.way_area_v}}>24e3) OR
-    (z>=10 AND {{polygon.way_area_v}}>96e3) OR
-    (z>=09 AND {{polygon.way_area_v}}>500e3) OR
-    (z>=08 AND {{polygon.way_area_v}}>2e6) OR
-    (z>=07 AND {{polygon.way_area_v}}>8e6) OR
-    (z>=06 AND {{polygon.way_area_v}}>32e6) OR
-    (z>=05 AND {{polygon.way_area_v}}>128e6)
+    (z>=11 AND {{polygon.way_area_v}}>25e3) OR
+    (z>=10 AND {{polygon.way_area_v}}>130e3) OR
+    (z>=09 AND {{polygon.way_area_v}}>600e3) OR
+    (z>=08 AND {{polygon.way_area_v}}>2500e3) OR
+    (z>=07 AND {{polygon.way_area_v}}>10e6) OR
+    (z>=06 AND {{polygon.way_area_v}}>40e6) OR
+    (z>=05 AND {{polygon.way_area_v}}>160e6)
   )
   GROUP BY(subclass)
 ) AS foo
@@ -1311,7 +1326,7 @@ FROM (
       ORDER BY rank ASC)) AS inclass_rank,
     agg_stop,level,layer,indoor,geom
   FROM {{omt_func_pref}}_poi_pre_rank(bounds_geom,z)) AS without_global_rank
-WHERE inclass_rank<=30;
+WHERE inclass_rank<=30 OR z>=14;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

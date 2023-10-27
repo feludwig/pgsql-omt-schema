@@ -11,6 +11,12 @@ printer_lock=threading.Lock()
 import run #local
 
 dbaccess,z,x,y,outdir=sys.argv[1:]
+
+#maximally parallelize database:new connections only
+def make_new_connection_cursor() :
+    access=psycopg2.connect(dbaccess)
+    return access.cursor()
+
 format='pbf'
 
 if z.find('-')>=0 :
@@ -125,8 +131,7 @@ class Writer(threading.Thread) :
             print(f'{z}/{x}/{y}.{format}',bs_written,'bytes')
 
 
-access=psycopg2.connect(dbaccess)
-ts=[Writer(access.cursor(),zs) for i in range(5)]
+ts=[Writer(make_new_connection_cursor(),zs) for i in range(5)]
 
 start=time.time()
 [t.start() for t in ts]
@@ -150,7 +155,7 @@ total_count=sum(total_z_count.values())
 print(round(total_bytes*1e-6,2),'MB total written')
 for z in zs :
     print(f'z{z:02}:')
-    Writer.print_layer_stats(access.cursor(),ts,z)
+    Writer.print_layer_stats(make_new_connection_cursor(),ts,z)
     if total_z_count[z]==0 :
         per_tile_kb_size=0
     else :

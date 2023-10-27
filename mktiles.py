@@ -13,12 +13,6 @@ import run #local
 dbaccess,z,x,y,outdir=sys.argv[1:]
 format='pbf'
 
-xs=[x]
-ys=[y]
-if x=='*' :
-    xs=list(range(2**z))
-if y=='*' :
-    ys=list(range(2**z))
 if z.find('-')>=0 :
     # z range, x and y are specified for starting zoom!
     zs=list(range(*map(int,z.split('-'))))
@@ -26,8 +20,16 @@ else :
     zs=[int(z)]
 if x.find('-')>=0 :
     xs=list(range(*map(int,x.split('-'))))
+elif x=='*' :
+    xs=list(range(2**zs[0]))
+else :
+    xs=[int(x)]
 if y.find('-')>=0 :
     ys=list(range(*map(int,y.split('-'))))
+elif y=='*' :
+    ys=list(range(2**zs[0]))
+else :
+    ys=[int(y)]
 
 class Writer(threading.Thread) :
     def __init__(self,c,zs) :
@@ -66,7 +68,7 @@ class Writer(threading.Thread) :
         headers=['layer_name','avg_pcent','avg_bytes','avg_rowcount']
         data=[(k,
             str(round(v[1]/v[0],1)),
-            get_size_pretty(v[2]/v[0]),str(round(v[3]/v[0])),
+            get_size_pretty(round(v[2]/v[0],1)),str(round(v[3]/v[0])),
             ) for k,v in per_layer_stats.items()]
         run.print_table(data,headers)
 
@@ -98,11 +100,11 @@ class Writer(threading.Thread) :
                     self.c.mogrify('SELECT * FROM omt_all_with_stats(%s,%s,%s);',(z,x,y)))
                 success=True
                 break
-            # InternalError_ when function was redefined while running/did not exist when needed
-            except (psycopg2.errors.InFailedSqlTransaction,psycopg2.errors.InternalError_) :
+            # when function was redefined while running/did not exist when needed
+            except psycopg2.Error as err :
                 self.c.execute('ABORT;')
                 with printer_lock :
-                    print(f'{z}/{x}/{y}.{format}','FailedSql retrying')
+                    print(f'{z}/{x}/{y}.{format}','failed SQL retrying')
         if not success :
             with printer_lock :
                 print(f'{z}/{x}/{y}.{format}','retried 5 times, abandoning')
@@ -130,22 +132,29 @@ start=time.time()
 [t.start() for t in ts]
 tix=0
 for z in zs :
-    for x in xs :
-        for y in ys :
-            scale=2**(z-zs[0])
-            ts[(tix)%len(ts)].todo.put((z,x*scale,y*scale))
-            tix+=1
+    scale=2**(z-zs[0])
+    for xr in xs :
+        for x in range(xr*scale,(xr+1)*scale) :
+            for yr in ys :
+                for y in range(yr*scale,(yr+1)*scale) :
+                    ts[(tix)%len(ts)].todo.put((z,x,y))
+                    tix+=1
 
 [t.join() for t in ts]
 
 total_z_bytes={z:sum(t.total_written[z] for t in ts) for z in zs}
 total_bytes=sum([v for z,v in total_z_bytes.items()])
 total_z_count={z:sum(t.total_count[z] for t in ts) for z in zs}
-total_count=sum([v for z,v in total_z_count.items()])
+print(total_z_count)
+total_count=sum(total_z_count.values())
 print(round(total_bytes*1e-6,2),'MB total written')
 for z in zs :
     print(f'z{z:02}:')
     Writer.print_layer_stats(access.cursor(),ts,z)
-    print('average',round(total_z_bytes[z]/total_z_count[z]*1e-3,2),'KB/tile,',
-        total_z_count[z],'tiles')
+    if total_z_count[z]==0 :
+        per_tile_kb_size=0
+    else :
+        per_tile_kb_size=round(total_z_bytes[z]/total_z_count[z]*1e-3,2)
+    print('total',round(total_z_bytes[z]*1e-6,2),'MB, average',
+            per_tile_kb_size,'KB/tile,',total_z_count[z],'tiles')
 print(round(time.time()-start,1),'seconds')

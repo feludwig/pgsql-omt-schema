@@ -34,6 +34,7 @@
 --  * INDEXer: hardcode the way_area conditions away and INDEX ON GIST(way), way_area
 --    this should be nicer than all the way_area>24e3, way_area>360e3 etc.. separate indexes...
 --  * transportation separate transportation_name layer earlier, in the aggregation phase
+--  * poi sophisticated filtering PARTITION BY class, eg: among all hospitals, take only the 5 biggest
 
 -- zoom filtering:
 --  water features filter out by area
@@ -231,6 +232,20 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_rank_by_area(area real) RETURNS
 AS $$
 SELECT CASE WHEN v.val<1 THEN 1 ELSE v.val END
   FROM (SELECT -1*log(20.0,area::numeric)::int+10 AS val) AS v;
+$$
+LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_start_date_year(start_date text) RETURNS int
+AS $$
+-- see https://wiki.openstreetmap.org/wiki/Key:start_date
+SELECT CASE
+  WHEN regexp_match(start_date,E'^jd:') IS NOT NULL THEN NULL -- ignore julian day jd:2455511
+  WHEN {{omt_func_pref}}_text_to_int_null((regexp_match(start_date,E'[0-9]{4}'))[1]) IS NOT NULL
+    THEN {{omt_func_pref}}_text_to_int_null((regexp_match(start_date,E'[0-9]{4}'))[1])
+  -- 'C13' means 13th century, 'mid C14' reduced to C14 for simplicity
+  WHEN {{omt_func_pref}}_text_to_int_null((regexp_match(start_date,E'C([0-9]{2})'))[1]) IS NOT NULL
+    THEN ({{omt_func_pref}}_text_to_int_null((regexp_match(start_date,E'C([0-9]{2})'))[1])-1)*100
+  ELSE NULL END;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
@@ -1194,7 +1209,7 @@ SELECT
       {{point.level}},{{point.indoor}},{{point.layer}},{{point.natural}},
       -- EXTENSION
       ({{point.man_made_v}}||COALESCE('_'||{{point.tower_type_v}},'')) AS man_made,
-      substr({{point.start_date_v}},0,5)::int AS start_date_year,
+      {{omt_func_pref}}_get_start_date_year({{point.start_date_v}}) AS start_date_year,
       {{point.wikidata_e}} AS has_wikidata,
       {{point.way}},'point' AS tablefrom
     FROM {{point.table_name}}
@@ -1211,7 +1226,7 @@ SELECT
       {{polygon.level}},{{polygon.indoor}},{{polygon.layer}},{{polygon.natural}},
       -- EXTENSION
       ({{polygon.man_made_v}}||COALESCE('_'||{{polygon.tower_type_v}},'')) AS man_made,
-      substr({{polygon.start_date_v}},0,5)::int AS start_date_year,
+      {{omt_func_pref}}_get_start_date_year({{polygon.start_date_v}}) AS start_date_year,
       {{polygon.wikidata_e}} AS has_wikidata,
       {{polygon.way}},'polygon' AS tablefrom
     FROM {{polygon.table_name}}

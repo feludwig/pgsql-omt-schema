@@ -150,6 +150,7 @@ need_columns={
         'ele', 'wetland', 'housenumber', 'building_levels',
         'building_part', 'min_height', 'height', 'location',
         'man_made', 'tower_type', 'start_date', 'wikidata',
+        'wikipedia',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

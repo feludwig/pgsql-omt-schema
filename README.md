@@ -68,6 +68,15 @@ currently only is queried from one
 * see `TODO` comments in sql
 * see [Disclaimer](#Disclaimer)
 
+# Dependencies for a full pipeline
+
+* [osm2pgsql](https://github.com/osm2pgsql-dev/osm2pgsql) and a
+[PostGIS](https://postgis.net/) enabled PostgreSQL database
+* [pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
+for serving the generated vector tiles
+* _Recommended_ : a file caching server, especially for your low-zoom tiles that
+can take a long time to generate.
+
 
 # Usage
 
@@ -112,7 +121,13 @@ indexing. This has the tradeoff of being much slower (up to 3h per piece)
 
 __Note__: You can run
 ```
-while sleep 1;do data="$(psql -d gis -p 5432 -c "select round((100*blocks_done)::numeric/nullif(blocks_total,0),2)::text||'%' as progress,pg_size_pretty(pg_relation_size(relid)) as tablesize,pg_size_pretty(pg_relation_size(index_relid)) as indexsize,command,phase,(select relname from pg_class where oid=index_relid) as indexname from pg_stat_progress_create_index" --csv|tail -n1)";printf '\033[2K\r%s' "${data}";done
+while sleep 1;do data="$(psql -d gis -p 5432 -c "select
+  round((100*blocks_done)::numeric/nullif(blocks_total,0),2)::text||'%' as progress,
+  pg_size_pretty(pg_relation_size(relid)) as tablesize,
+  pg_size_pretty(pg_relation_size(index_relid)) as indexsize,command,phase,
+  (select relname from pg_class where oid=index_relid) as indexname
+from pg_stat_progress_create_index" --csv|tail -n1)";
+printf '\033[2K\r%s' "${data}";done
 ```
 for a live index creation progress report.
 
@@ -182,16 +197,16 @@ Info: this will use some space in the database.
 Not the omt schema, but still a rich addition to any map: elevation, represented as same-elevation contour lines.
 
 
-On a just somewhat related note: The `contours-function.sql` creates a `pg_tileserv`
+The `contours-function.sql` creates a `pg_tileserv`
 compatible sql function that returns data from a contours lines database
 ([setup guide](https://wiki.openstreetmap.org/wiki/Contour_relief_maps_using_mapnik#The_PostGIS_approach)).
 The supplied [`contours.json`](contours.json) is a simple style for that, adapted from the `contours.xml`
-in the guide.
+in the guide. This is independent of the omt-schema.
 
 ## Javascript
 
 The contours layer alone is not useful. Add the following javascript to
-"append" contours to an already existing layger :
+"append" contours to an already existing layer :
 ```
 document.map.on('load',function() {
   fetch('contours.json').then(r=>r.json()).then(function(c) {
@@ -207,16 +222,6 @@ _Note_ : Change `hostname` to your own in the sample `contours.json`.
 
 _Note_ : Make sure that the `"sources":{}` section does not contain a source
 name that conflicts with the underlying `style.json` (here `"openmaptiles"` vs `"contours"`)
-
-
-# Dependencies for a full pipeline
-
-* [osm2pgsql](https://github.com/osm2pgsql-dev/osm2pgsql) and a
-[PostGIS](https://postgis.net/) enabled PostgreSQL database
-* [pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
-for serving the generated vector tiles
-* _Recommended_ : a file caching server, especially for your low-zoom tiles that
-can take a long time to generate.
 
 
 # Disclaimer

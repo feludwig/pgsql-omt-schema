@@ -110,10 +110,10 @@ class Writer(threading.Thread) :
             except psycopg2.Error as err :
                 self.c.execute('ABORT;')
                 with printer_lock :
-                    print(f'{z}/{x}/{y}.{format}','failed SQL retrying')
+                    print(f'{z:2}/{x}/{y}.{format}\t','failed SQL retrying')
         if not success :
             with printer_lock :
-                print(f'{z}/{x}/{y}.{format}','retried 5 times, abandoning')
+                print(f'{z:2}/{x}/{y}.{format}\t','retried 5 times, abandoning')
             return
         result=[dict(zip([col.name for col in self.c.description],i)) for i in self.c.fetchall()]
         for line in result :
@@ -128,7 +128,7 @@ class Writer(threading.Thread) :
         self.total_written[z]+=bs_written
         self.total_count[z]+=1
         with printer_lock :
-            print(f'{z}/{x}/{y}.{format}',bs_written,'bytes')
+            print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes')
 
 
 ts=[Writer(make_new_connection_cursor(),zs) for i in range(5)]

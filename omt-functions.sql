@@ -1,4 +1,3 @@
-
 -- TEMPLATE usage:
 -- need to define variables in run.py, then
 -- syntax is: {% if with_osm_id %} SQL STATEMENT1 {% else %} SQL STATEMENT2 {% endif %}
@@ -30,10 +29,9 @@
 
 -- TODO:
 --  *move all table names to templated table names
---  * INDEXer: hardcode the way_area conditions away and INDEX ON GIST(way), way_area
---    this should be nicer than all the way_area>24e3, way_area>360e3 etc.. separate indexes...
 --  * boundary: read from matview country_boundaries
 --  * transportation separate transportation_name layer earlier, in the aggregation phase
+--    - DONE, and: optimize transportation and transportation_name separately
 --  * poi sophisticated filtering PARTITION BY class,
 --    eg: among all hospitals, take only the 5 biggest
 --  * landcover: ST_SimplifyPreserveTopology works well, find the correct exponential factor
@@ -66,17 +64,61 @@ DROP TYPE IF EXISTS {{omt_typ_pref}}_park CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_place CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_poi CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_waterway CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_transportation CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_transportation_name CASCADE;
 
 -- united types to make {layer} and {layer}_name
-DROP TYPE IF EXISTS {{omt_typ_pref}}_named_transportation CASCADE;
-DROP TYPE IF EXISTS {{omt_typ_pref}}_named_water CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_transportation_merged CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_water_merged CASCADE;
 
 -- BEWARE! the order of these columns is important.
 -- if you exchange two differently-typed columns, postgresql will not be happy,
 -- but the danger is when you exchange two same-type columns: postgresql will
 -- happily resturn you the wrong results...
 
-CREATE TYPE {{omt_typ_pref}}_named_transportation AS (
+
+CREATE TYPE {{omt_typ_pref}}_transportation AS (
+{% if with_osm_id %} osm_id text, {% endif %}
+  class text,
+  subclass text,
+  network text,
+  brunnel text,
+  oneway int,
+  ramp int,
+  service text,
+  access boolean,
+  toll int,
+  expressway int,
+  --EXTENSION:
+  cycleway int,
+  layer int,
+  level text,
+  indoor int,
+  bicycle text,
+  foot text,
+  horse text,
+  mtb_scale text,
+  surface text,
+  geom geometry
+);
+
+CREATE TYPE {{omt_typ_pref}}_transportation_name AS (
+{% if with_osm_id %} osm_id text, {% endif %}
+  name text,
+  ref text,
+  --ref_length int, -- WARN:IS MISSING!, added later on
+  network text,
+  -- WARN: oder diff from transportation
+  class text,
+  subclass text,
+  brunnel text,
+  level text,
+  layer int,
+  indoor int,
+  -- MISSING: route_x !!! horrible but ?
+  geom geometry
+);
+CREATE TYPE {{omt_typ_pref}}_transportation_merged AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
   ref text,
@@ -90,6 +132,7 @@ CREATE TYPE {{omt_typ_pref}}_named_transportation AS (
   access boolean,
   toll int,
   expressway int,
+  --EXTENSION:
   cycleway int,
   layer int,
   level text,
@@ -101,6 +144,7 @@ CREATE TYPE {{omt_typ_pref}}_named_transportation AS (
   surface text,
   geom geometry
 );
+
 
 CREATE TYPE {{omt_typ_pref}}_aerodrome_label AS (
 {% if with_osm_id %} osm_id text, {% endif %}
@@ -198,7 +242,7 @@ CREATE TYPE {{omt_typ_pref}}_poi AS (
   geom geometry
 );
 
-CREATE TYPE {{omt_typ_pref}}_named_water AS (
+CREATE TYPE {{omt_typ_pref}}_water_merged AS (
   name text,
   id bigint,
   class text,
@@ -723,8 +767,9 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_merge_transportation(bounds_geom geometry,z integer)
-RETURNS setof {{omt_typ_pref}}_named_transportation
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_agg_transportation_merged(
+    bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_transportation_merged
 AS $$
 SELECT * FROM (
   SELECT
@@ -858,29 +903,17 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_z_low_13(bounds_geom geometry,z integer)
-RETURNS setof {{omt_typ_pref}}_named_transportation
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_z_low_13(
+    bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
 -- similar to _transportation_z_low_13 but less discriminate because less
 --  features are shown anywawys
 -- motivation:merge more columns together, because at z>=13 names of
 -- roads are not shown anyways, nor bridges etc...
 SELECT
-{% if with_osm_id %}
-{% if transportation_aggregate_osm_id_reduce %}
-  (CASE WHEN (array_agg(DISTINCT name))[1] IS NULL THEN NULL
-    ELSE string_agg(DISTINCT osm_id,',')
-  END) AS osm_id,
-{% else %}
-  string_agg(DISTINCT osm_id,',') AS osm_id,
-{% endif %}
-{% endif %}
-  (array_agg(DISTINCT name))[1] AS name,
-  (CASE WHEN
-      (z>=07 AND class IN ('motorway') AND brunnel IS NULL)
-      OR (z>=12 AND class IN ('primary','motorway')) THEN ref
-    ELSE NULL
-  END) AS ref,class,(array_agg(subclass))[1] AS subclass,
+{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
+  class,(array_agg(subclass))[1] AS subclass,
   (array_agg(DISTINCT network))[1] AS network,brunnel,
   (array_agg(DISTINCT oneway))[1] AS oneway,min(ramp) AS ramp,
   (array_agg(DISTINCT service))[1] AS service,
@@ -891,15 +924,19 @@ SELECT
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
-FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
-GROUP BY(class,ref,brunnel,layer);
+FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
+GROUP BY(class,brunnel,layer);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_highz(bounds_geom geometry,z integer)
-RETURNS setof {{omt_typ_pref}}_named_transportation
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name_z_low_13(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
+-- similar to _transportation_z_low_13 but less discriminate because less
+--  features are shown anywawys
+-- motivation:merge more columns together, because at z>=13 names of
+-- roads are not shown anyways: only ref, nor bridges etc...
 SELECT
 {% if with_osm_id %}
 {% if transportation_aggregate_osm_id_reduce %}
@@ -910,7 +947,30 @@ SELECT
   string_agg(DISTINCT osm_id,',') AS osm_id,
 {% endif %}
 {% endif %}
-  name,ref,class,subclass,
+  name,
+  (CASE WHEN
+      (z>=07 AND class IN ('motorway'))
+      OR (z>=12 AND class IN ('primary','motorway')) THEN ref
+    ELSE NULL
+  END) AS ref,
+  (array_agg(DISTINCT network))[1] AS network,class,
+  (array_agg(DISTINCT subclass))[1] AS subclass,
+  (array_agg(DISTINCT brunnel))[1] AS brunnel,
+  (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
+  max(indoor) AS indoor,
+  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
+FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
+GROUP BY(class,name,ref);
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_highz(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_transportation
+AS $$
+SELECT
+{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
+  class,subclass,
   (array_agg(DISTINCT network))[1] AS network,brunnel,
   oneway,min(ramp) AS ramp,(array_agg(DISTINCT service))[1] AS service,
   access,max(toll) AS toll,max(expressway) AS expressway,
@@ -920,7 +980,7 @@ SELECT
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
-FROM {{omt_func_pref}}_pre_merge_transportation(bounds_geom,z)
+FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
 -- deduce that a road MAY be candidate for merging if :
 --  same name, class and ref accross geometry features
 --  FILTER OUT bridge or tunnel segments (those will be rendered differently)
@@ -935,10 +995,54 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
-RETURNS setof {{omt_typ_pref}}_named_transportation
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name_highz(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_transportation_name
+AS $$
+SELECT
+{% if with_osm_id %}
+{% if transportation_aggregate_osm_id_reduce %}
+  (CASE WHEN (array_agg(DISTINCT name))[1] IS NULL THEN NULL
+    ELSE string_agg(DISTINCT osm_id,',')
+  END) AS osm_id,
+{% else %}
+  string_agg(DISTINCT osm_id,',') AS osm_id,
+{% endif %}
+{% endif %}
+  name,ref,
+  (array_agg(DISTINCT network))[1] AS network,
+  class,subclass,(array_agg(DISTINCT brunnel))[1] AS brunnel,
+  (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
+  max(indoor) AS indoor,
+  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
+FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
+-- deduce that a road MAY be candidate for merging if :
+--  same name, class and ref accross geometry features
+-- then do the merging with unnest(ST_ClusterIntersecting())::multigeometries
+-- ST_CollectionExtract(*,2) extracts only line features, ST_LineMerge then merges these
+--  multigeometries to single geometries
+GROUP BY(name,class,subclass,ref);
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
 BEGIN IF (z<13) THEN
+  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_z_low_13(bounds_geom,z);
+ELSE
+  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_highz(bounds_geom,z);
+END IF;
+END
+$$
+LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
+RETURNS setof {{omt_typ_pref}}_transportation
+AS $$
+BEGIN IF (z<13) THEN
+      -- only osm_id if not in transportation_name
+      --{% if with_osm_id %} (CASE WHEN name IS NULL AND ref IS NULL THEN osm_id END) AS osm_id, {% endif %}
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_13(bounds_geom,z);
 ELSE
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_highz(bounds_geom,z);
@@ -1344,7 +1448,7 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry)
-RETURNS setof {{omt_typ_pref}}_named_water
+RETURNS setof {{omt_typ_pref}}_water_merged
 AS $$
 SELECT {{polygon.name}},osm_id AS id, --TODO: move this to with_osm_id template arg ?
   (CASE
@@ -1416,6 +1520,15 @@ WITH
     SELECT * FROM {{omt_func_pref}}_water(ST_TileEnvelope(z,x,y))),
   premvt_transportation AS (
     SELECT * FROM {{omt_func_pref}}_transportation(ST_TileEnvelope(z,x,y),z)),
+  premvt_transportation_name AS (
+    SELECT
+      {% if with_osm_id %} osm_id, {% endif %}
+      {{additional_name_columns}}
+      name,
+      replace(ref,';',E'\n') AS ref,length(ref) AS ref_length,
+      network,class,subclass,brunnel,level,layer,indoor,
+      geom
+    FROM {{omt_func_pref}}_transportation_name(ST_TileEnvelope(z,x,y),z)),
   premvt_water_noname AS (
     SELECT
       --TODO: thow away this id
@@ -1428,26 +1541,6 @@ WITH
       -- TODO: WARN! different from water_noname
       intermittent,geom
     FROM premvt_water WHERE name IS NOT NULL
-  ),
-  premvt_transportation_noname AS (
-    SELECT
-      -- only osm_id if not in transportation_name
-      {% if with_osm_id %} (CASE WHEN name IS NULL AND ref IS NULL THEN osm_id END) AS osm_id, {% endif %}
-      network,class,subclass,brunnel,oneway,ramp,service,
-      access,toll,expressway,cycleway,level,layer,indoor,bicycle,
-      foot,horse,mtb_scale,surface,
-      geom
-    FROM premvt_transportation
-  ),
-  premvt_transportation_name AS (
-    SELECT
-      {% if with_osm_id %} osm_id, {% endif %}
-      {{additional_name_columns}}
-      name,
-      replace(ref,';',E'\n') AS ref,length(ref) AS ref_length,
-      network,class,subclass,brunnel,level,layer,indoor,
-      geom
-    FROM premvt_transportation WHERE name IS NOT NULL OR ref IS NOT NULL
   )
   SELECT ST_AsMVT(premvt_aerodrome_label,'aerodrome_label') AS mvt,
     'aerodrome_label' AS name,
@@ -1493,10 +1586,10 @@ WITH
     'poi' AS name,
     count(*) AS rowcount
     FROM premvt_poi UNION
-  SELECT ST_AsMVT(premvt_transportation_noname,'transportation') AS mvt,
+  SELECT ST_AsMVT(premvt_transportation,'transportation') AS mvt,
     'transportation' AS name,
     count(*) AS rowcount
-    FROM premvt_transportation_noname UNION
+    FROM premvt_transportation UNION
   SELECT ST_AsMVT(premvt_transportation_name,'transportation_name') AS mvt,
     'transportation_name' AS name,
     count(*) AS rowcount

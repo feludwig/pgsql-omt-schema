@@ -771,7 +771,16 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_agg_transportation_merged(
     bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation_merged
 AS $$
-SELECT * FROM (
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  name,ref,class,
+  (CASE WHEN class IN ('bicycle_route') THEN network
+    ELSE subclass END) AS subclass,
+  network,brunnel,oneway,ramp,
+  service,access,toll,expressway,cycleway,layer,level,
+  indoor,bicycle,foot,horse,mtb_scale,surface,
+  geom
+FROM (
   SELECT
 {% if with_osm_id %}
   (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
@@ -858,8 +867,6 @@ SELECT * FROM (
     {{line.layer}},
     {{line.level}},
     (CASE WHEN {{line.indoor_v}} IN ('yes','1') THEN 1 END) AS indoor,
-    -- DO THE ZOOM modulation!
-    -- https://github.com/openmaptiles/openmaptiles/blob/master/layers/transportation/transportation.sql
     -- also CHECK tracktypes! in style they look like asphalt roads
     NULLIF({{line.bicycle_v}},'') AS bicycle,
     NULLIF({{line.foot_v}},'') AS foot,
@@ -892,24 +899,23 @@ SELECT * FROM (
     OR {{line.route_v}} IN ('bicycle') --NOTE:extension
   ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
 WHERE (
-     (z>=13) -- take everything
-  OR (substring(class,'([a-z]+)') IN ('tertiary','minor') AND z>=11)
-  OR (substring(class,'([a-z]+)') IN ('secondary','raceway','busway','transit') AND z>=9)
-  OR (substring(class,'([a-z]+)') IN ('primary','motorway','trunk','ferry','rail','aerialway') AND z>=3)
+     (z>=12) -- take everything
+  OR (z<12 AND z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
+  OR (z<11 AND z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','transit','aerialway'))
+  OR (z<09 AND z>=07 AND substring(class,'([a-z]+)') IN ('primary','motorway','trunk','ferry','rail'))
+  OR (z<07 AND z>=05 AND substring(class,'([a-z]+)') IN ('motorway'))
     --extension
-  OR (class='bicycle_route' AND network='national' AND z>=3)
+  OR (z>=05 AND class='bicycle_route' AND network='national')
 );
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_z_low_13(
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_z_low_10(
     bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
--- similar to _transportation_z_low_13 but less discriminate because less
---  features are shown anywawys
--- motivation:merge more columns together, because at z>=13 names of
+-- motivation: merge more columns together, because at z>=10 names of
 -- roads are not shown anyways, nor bridges etc...
 SELECT
 {% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
@@ -930,13 +936,11 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name_z_low_13(bounds_geom geometry,z integer)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name_z_low_10(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
--- similar to _transportation_z_low_13 but less discriminate because less
---  features are shown anywawys
--- motivation:merge more columns together, because at z>=13 names of
--- roads are not shown anyways: only ref, nor bridges etc...
+-- motivation: merge more columns together, see transportation_z_low_10
+-- and name not shown anymore, since z<13
 SELECT
 {% if with_osm_id %}
 {% if transportation_aggregate_osm_id_reduce %}
@@ -947,20 +951,15 @@ SELECT
   string_agg(DISTINCT osm_id,',') AS osm_id,
 {% endif %}
 {% endif %}
-  name,
-  (CASE WHEN
-      (z>=07 AND class IN ('motorway'))
-      OR (z>=12 AND class IN ('primary','motorway')) THEN ref
-    ELSE NULL
-  END) AS ref,
-  (array_agg(DISTINCT network))[1] AS network,class,
-  (array_agg(DISTINCT subclass))[1] AS subclass,
-  (array_agg(DISTINCT brunnel))[1] AS brunnel,
+  NULL AS name,ref,
+  (array_agg(DISTINCT network))[1] AS network,class,subclass,
+  NULL AS brunnel,
   (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
   max(indoor) AS indoor,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
-GROUP BY(class,name,ref);
+WHERE ref IS NOT NULL
+GROUP BY(class,subclass,ref);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1015,6 +1014,7 @@ SELECT
   max(indoor) AS indoor,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
+WHERE name IS NOT NULL OR ref IS NOT NULL
 -- deduce that a road MAY be candidate for merging if :
 --  same name, class and ref accross geometry features
 -- then do the merging with unnest(ST_ClusterIntersecting())::multigeometries
@@ -1028,7 +1028,7 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name(bounds_geom geo
 RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
 BEGIN IF (z<13) THEN
-  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_z_low_13(bounds_geom,z);
+  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_z_low_10(bounds_geom,z);
 ELSE
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_highz(bounds_geom,z);
 END IF;
@@ -1043,7 +1043,7 @@ AS $$
 BEGIN IF (z<13) THEN
       -- only osm_id if not in transportation_name
       --{% if with_osm_id %} (CASE WHEN name IS NULL AND ref IS NULL THEN osm_id END) AS osm_id, {% endif %}
-  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_13(bounds_geom,z);
+  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_10(bounds_geom,z);
 ELSE
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_highz(bounds_geom,z);
 END IF;

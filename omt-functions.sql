@@ -900,10 +900,10 @@ FROM (
   ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
 WHERE (
      (z>=12) -- take everything
-  OR (z<12 AND z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
-  OR (z<11 AND z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','transit','aerialway'))
-  OR (z<09 AND z>=07 AND substring(class,'([a-z]+)') IN ('primary','motorway','trunk','ferry','rail'))
-  OR (z<07 AND z>=05 AND substring(class,'([a-z]+)') IN ('motorway'))
+  OR (z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
+  OR (z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','transit','aerialway'))
+  OR (z>=07 AND substring(class,'([a-z]+)') IN ('primary','trunk','ferry','rail'))
+  OR (z>=05 AND substring(class,'([a-z]+)') IN ('motorway'))
     --extension
   OR (z>=05 AND class='bicycle_route' AND network='national')
 );
@@ -945,7 +945,8 @@ SELECT
 {% if with_osm_id %}
 {% if transportation_aggregate_osm_id_reduce %}
   (CASE WHEN (array_agg(DISTINCT name))[1] IS NULL THEN NULL
-    ELSE string_agg(DISTINCT osm_id,',')
+    --LIMIT 5 but that's a syntax error in an aggregate
+    ELSE array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',')
   END) AS osm_id,
 {% else %}
   string_agg(DISTINCT osm_id,',') AS osm_id,
@@ -973,7 +974,7 @@ SELECT
   (array_agg(DISTINCT network))[1] AS network,brunnel,
   oneway,min(ramp) AS ramp,(array_agg(DISTINCT service))[1] AS service,
   access,max(toll) AS toll,max(expressway) AS expressway,
-  max(cycleway) AS cycleway,
+  cycleway,
   layer,(array_agg(DISTINCT level))[1] AS level,
   max(indoor) AS indoor,bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
@@ -989,7 +990,7 @@ FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
 -- then do the merging with unnest(ST_ClusterIntersecting())::multigeometries
 -- ST_CollectionExtract(*,2) extracts only line features, ST_LineMerge then merges these
 --  multigeometries to single geometries
-GROUP BY(name,class,subclass,ref,brunnel,oneway,access,layer,bicycle);
+GROUP BY(name,class,subclass,ref,brunnel,oneway,access,layer,cycleway,bicycle);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1027,7 +1028,7 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
-BEGIN IF (z<13) THEN
+BEGIN IF (z<=10) THEN
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_z_low_10(bounds_geom,z);
 ELSE
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_highz(bounds_geom,z);
@@ -1040,7 +1041,7 @@ LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
-BEGIN IF (z<13) THEN
+BEGIN IF (z<=10) THEN
       -- only osm_id if not in transportation_name
       --{% if with_osm_id %} (CASE WHEN name IS NULL AND ref IS NULL THEN osm_id END) AS osm_id, {% endif %}
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_10(bounds_geom,z);

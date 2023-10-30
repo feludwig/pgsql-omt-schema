@@ -39,7 +39,7 @@
 --  * landcover: ST_SimplifyPreserveTopology works well, find the correct exponential factor
 --    (it's not 4 !..?)
 --    -> THEN do the same on landuse, water and other aerial big layers
---  * water, mountain_peak by-zoom FILTERING!
+--  * water by-zoom FILTERING!
 --  * FORALL layers: osm_id aggregation: somehow only take some ids?
 --    -> string_agg(DISTINCT osm_id ORDER BY way_area DESC LIMIT 5,',')
 
@@ -525,37 +525,48 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_mountain_peak(bounds_geom geometry)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_mountain_peak(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_mountain_peak
 AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-  name,class,{{omt_func_pref}}_text_to_int_null(ele) AS ele,
-  (row_number() OVER (ORDER BY ((name IS NULL)::int+score) ASC))::int AS rank,
+  name,class,ele,rank,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (
   SELECT
-{% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
-    {{point.name}},{{point.ele_ct}},{{point.way}},
-    -- score of 0 means popular item: should be shown first
-    ({{point.wikipedia_ne}}::int+{{point.wikidata_ne}}::int) AS score,
-    {{point.natural_v}} AS class
-  FROM {{point.table_name}}
-  WHERE {{point.natural_v}} IN ('peak','volcano','saddle')
-  UNION ALL
-  SELECT
-{% if with_osm_id %}
-  (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
-    WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
-{% endif %}
-    {{line.name}},{{line.ele_ct}},{{line.way}},
-    -- score of 0 means popular item: should be shown first
-    ({{line.wikipedia_ne}}::int+{{line.wikidata_ne}}::int) AS score,
-    {{line.natural_v}} AS class
-  FROM {{line.table_name}}
-  WHERE {{line.natural_v}} IN ('ridge','cliff','arete')
-    ) AS foo
-WHERE ST_Intersects(way,bounds_geom);
+  {% if with_osm_id %} osm_id, {% endif %}
+    name,class,{{omt_func_pref}}_text_to_int_null(ele) AS ele,
+    (row_number() OVER (ORDER BY score ASC))::int AS rank,
+    --also take score up: for zoom filtering
+    score,way
+  FROM (
+    SELECT
+  {% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
+      {{point.name}},{{point.ele_ct}},{{point.way}},
+      -- score of 0 means popular item: should be shown first
+      ({{point.name_ne}}::int+{{point.wikipedia_ne}}::int+{{point.wikidata_ne}}::int) AS score,
+      {{point.natural_v}} AS class
+    FROM {{point.table_name}}
+    WHERE {{point.natural_v}} IN ('peak','volcano','saddle')
+    UNION ALL
+    SELECT
+  {% if with_osm_id %}
+    (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
+      WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
+  {% endif %}
+      {{line.name}},{{line.ele_ct}},{{line.way}},
+      -- score of 0 means popular item: should be shown first
+      ({{line.name_ne}}::int+{{line.wikipedia_ne}}::int+{{line.wikidata_ne}}::int) AS score,
+      {{line.natural_v}} AS class
+    FROM {{line.table_name}}
+    WHERE {{line.natural_v}} IN ('ridge','cliff','arete')
+      ) AS united_point_line
+  WHERE ST_Intersects(way,bounds_geom)
+) AS zoom_unfiltered
+WHERE (z>=14)
+  OR (z<14 AND rank<=30) -- limit to X features per tile
+  OR (z<11 AND score=0 AND class IN ('peak')) -- only wikipedia-existing 'peak's
+;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1385,7 +1396,7 @@ WITH
     SELECT * FROM {{omt_func_pref}}_landuse(ST_TileEnvelope(z,x,y),z)),
   premvt_mountain_peak AS (
     SELECT {{additional_name_columns}} *
-    FROM {{omt_func_pref}}_mountain_peak(ST_TileEnvelope(z,x,y))),
+    FROM {{omt_func_pref}}_mountain_peak(ST_TileEnvelope(z,x,y),z)),
   premvt_park AS (
     SELECT {{additional_name_columns}} *
     FROM {{omt_func_pref}}_park(ST_TileEnvelope(z,x,y))),

@@ -23,8 +23,10 @@
 --  {polygon} the table storing all line features, default osm2pgsql name planet_osm_polygon
 --    -> exaclty like {point}, there is a {polygon.table_name} and
 --    -> {polygon.<col>}, {polygon.<col>_v}, {polygon.<col>_e}, {polygon.<col>_ne}
---  ALSO: any column name {point.<colname>_tc} ["tags coalesce"] gets expanded to:
+--  ALSO: any column name {point.<colname>_ct} ["coalesce tag"] gets expanded to:
 --    COALESCE(point."colname",point."tags"->'colname') AS colname
+--  AND its counterpart {point.<colname>_ctv} ["coalesce tag value"] :
+--    COALESCE(point."colname",point."tags"->'colname')
 
 
 -- TODO:
@@ -300,52 +302,26 @@ SELECT CASE
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_adjust_rank_by_class(class text) RETURNS int
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_place_multiplier(class text) RETURNS int
 AS $$
-SELECT CASE
-  WHEN class IN ('continent','country','state') THEN -2
-  WHEN class IN ('province','city') THEN -1
-  WHEN class IN ('village') THEN +1
-  WHEN class IN ('hamlet','suburb','quarter','neighbourhood') THEN +2
-  WHEN class IN ('isolated_dwelling') THEN +3
-    -- island, town
+SELECT CASE class
+  WHEN 'continent' THEN 12
+  WHEN 'country' THEN 11
+  WHEN 'state' THEN 10
+  WHEN 'province' THEN 9
+  WHEN 'city' THEN 8
+  WHEN 'town' THEN 7
+  WHEN 'island' THEN 6
+  WHEN 'village' THEN 5
+  WHEN 'suburb' THEN 4
+  WHEN 'quarter' THEN 3
+  WHEN 'neighbourhood' THEN 2
+  WHEN 'hamlet' THEN 1
+  WHEN 'isolated_dwelling' THEN 0
   ELSE 0
 END;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
-
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_point_admin_parent_area(node_id bigint) RETURNS real
-AS $$
-SELECT {{polygon.way_area}}
-FROM {{polygon.table_name}} WHERE {{polygon.boundary_v}}='administrative'
-    AND ST_Intersects(way,(SELECT {{point.way}} FROM {{point.table_name}}
-        WHERE {{point.osm_id_v}}=node_id))
-  ORDER BY({{polygon.way_area_v}}) ASC LIMIT 1;
-$$
-LANGUAGE 'sql' STABLE PARALLEL SAFE;
-
-
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_point_admin_enclosing_rank(node_id bigint) RETURNS int
-  -- a neighbourhood is not the admin_centre of anything. instead take its enclosing lowest
-  -- admin level. add 1 to the rank to signify smaller than the administrative boundary
-  -- BUT if the name is the same for that admin level, take ist rank (+0)
-AS $$
-WITH enclosing_area AS (
-  SELECT {{polygon.way_area}},(SELECT {{point.name}} FROM {{point.table_name}}
-      WHERE {{point.osm_id_v}}=node_id)=name AS samename
-    FROM {{polygon.table_name}} WHERE {{polygon.boundary_v}}='administrative'
-      AND ST_Intersects(way,(SELECT {{point.way}} FROM {{point.table_name}}
-          WHERE {{point.osm_id_v}}=node_id))
-    ORDER BY({{polygon.admin_level_v}}) DESC LIMIT 1)
-  SELECT CASE WHEN enclosing_area.samename=true THEN {{omt_func_pref}}_get_rank_by_area(way_area)
-    ELSE
-      {{omt_func_pref}}_get_rank_by_area(way_area)+1
-    END FROM enclosing_area;
-$$
-LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
-
-
 
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landuse(bounds_geom geometry,z integer)
@@ -479,12 +455,15 @@ SELECT
   END ) AS class,subclass,
   ST_AsMVTGeom(CASE
     WHEN z>=12 THEN way
-    WHEN z>=11 THEN ST_SimplifyPreserveTopology(way,25)
-    WHEN z>=10 THEN ST_SimplifyPreserveTopology(way,100)
-    WHEN z>=09 THEN ST_SimplifyPreserveTopology(way,300)
-    WHEN z>=08 THEN ST_SimplifyPreserveTopology(way,1000)
-    WHEN z>=07 THEN ST_SimplifyPreserveTopology(way,3e3)
-    ELSE ST_SimplifyPreserveTopology(way,9e3)
+    WHEN z=11 THEN ST_SimplifyPreserveTopology(way,25)
+    WHEN z=10 THEN ST_SimplifyPreserveTopology(way,100)
+    WHEN z=09 THEN ST_SimplifyPreserveTopology(way,300)
+    WHEN z=08 THEN ST_SimplifyPreserveTopology(way,1000)
+    WHEN z=07 THEN ST_SimplifyPreserveTopology(way,1800)
+    WHEN z=06 THEN ST_SimplifyPreserveTopology(way,3e3)
+    WHEN z=05 THEN ST_SimplifyPreserveTopology(way,5.8e3)
+    WHEN z=04 THEN ST_SimplifyPreserveTopology(way,9e3)
+    ELSE ST_SimplifyPreserveTopology(way,11e3)
     END,bounds_geom) AS geom
 FROM (SELECT
 {% if with_osm_id %}
@@ -579,17 +558,18 @@ SELECT
 FROM (
   SELECT
   {% if with_osm_id %} osm_id, {% endif %}
-    name,class,{{omt_func_pref}}_text_to_int_null(ele) AS ele,
-    (row_number() OVER (ORDER BY score ASC))::int AS rank,
+    name,class,ele,
+    (row_number() OVER (ORDER BY 10000*score+(CASE WHEN
+          ele IS NULL THEN 0 ELSE ele END) DESC))::int AS rank,
     --also take score up: for zoom filtering
     score,way
   FROM (
     SELECT
   {% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
-      {{point.name}},{{point.ele_ct}},{{point.way}},
-      -- score of 0 means popular item: should be shown first
-      ({{point.name_ne}}::int+{{point.wikipedia_ne}}::int+{{point.wikidata_ne}}::int) AS score,
-      {{point.natural_v}} AS class
+      {{point.name}},{{omt_func_pref}}_text_to_int_null({{point.ele_ctv}}) AS ele,
+      -- score of 3 means popular item: should be shown first
+      ({{point.name_e}}::int+{{point.wikipedia_e}}::int+{{point.wikidata_e}}::int) AS score,
+      {{point.natural_v}} AS class,{{point.way}}
     FROM {{point.table_name}}
     WHERE {{point.natural_v}} IN ('peak','volcano','saddle')
     UNION ALL
@@ -598,18 +578,18 @@ FROM (
     (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
       WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
   {% endif %}
-      {{line.name}},{{line.ele_ct}},{{line.way}},
-      -- score of 0 means popular item: should be shown first
-      ({{line.name_ne}}::int+{{line.wikipedia_ne}}::int+{{line.wikidata_ne}}::int) AS score,
-      {{line.natural_v}} AS class
+      {{line.name}},{{omt_func_pref}}_text_to_int_null({{line.ele_ctv}}) AS ele,
+      -- score of 3 means popular item: should be shown first
+      ({{line.name_e}}::int+{{line.wikipedia_e}}::int+{{line.wikidata_e}}::int) AS score,
+      {{line.natural_v}} AS class,{{line.way}}
     FROM {{line.table_name}}
     WHERE {{line.natural_v}} IN ('ridge','cliff','arete')
       ) AS united_point_line
   WHERE ST_Intersects(way,bounds_geom)
 ) AS zoom_unfiltered
 WHERE (z>=14)
-  OR (z<14 AND rank<=30) -- limit to X features per tile
-  OR (z<11 AND score=0 AND class IN ('peak')) -- only wikipedia-existing 'peak's
+  OR (z>=11 AND z<14 AND rank<=30) -- limit to X features per tile
+  OR (z<11 AND score=3 AND class IN ('peak') AND rank<=30) -- only wikipedia-existing 'peak's
 ;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -917,21 +897,29 @@ RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
 -- motivation: merge more columns together, because at z>=10 names of
 -- roads are not shown anyways, nor bridges etc...
+-- delete/disregard brunnels+layer
 SELECT
-{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
-  class,(array_agg(subclass))[1] AS subclass,
-  (array_agg(DISTINCT network))[1] AS network,brunnel,
+{% if with_osm_id %}
+{% if transportation_aggregate_osm_id_reduce %}
+    --LIMIT 5 but that's a syntax error in an aggregate
+    array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
+{% else %}
+  string_agg(DISTINCT osm_id,',') AS osm_id,
+{% endif %}
+{% endif %}
+  class,subclass,
+  (array_agg(DISTINCT network))[1] AS network,NULL AS brunnel,
   (array_agg(DISTINCT oneway))[1] AS oneway,min(ramp) AS ramp,
   (array_agg(DISTINCT service))[1] AS service,
   (array_agg(DISTINCT access))[1] AS access,max(toll) AS toll,
   max(expressway) AS expressway,max(cycleway) AS cycleway,
-  layer,(array_agg(DISTINCT level))[1] AS level,
+  NULL::int AS layer,(array_agg(DISTINCT level))[1] AS level,
   max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
-GROUP BY(class,brunnel,layer);
+GROUP BY(class,subclass);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -959,7 +947,7 @@ SELECT
   max(indoor) AS indoor,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
-WHERE ref IS NOT NULL
+WHERE ref IS NOT NULL AND class IN ('motorway') -- at z<=10, only show motorway refs
 GROUP BY(class,subclass,ref);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -969,7 +957,14 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_highz(bounds_geom ge
 RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
 SELECT
-{% if with_osm_id %} string_agg(DISTINCT osm_id,',') AS osm_id, {% endif %}
+{% if with_osm_id %}
+{% if transportation_aggregate_osm_id_reduce %}
+  --LIMIT 5 but that's a syntax error in an aggregate
+  array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
+{% else %}
+  string_agg(DISTINCT osm_id,',') AS osm_id,
+{% endif %}
+{% endif %}
   class,subclass,
   (array_agg(DISTINCT network))[1] AS network,brunnel,
   oneway,min(ramp) AS ramp,(array_agg(DISTINCT service))[1] AS service,
@@ -1002,7 +997,7 @@ SELECT
 {% if with_osm_id %}
 {% if transportation_aggregate_osm_id_reduce %}
   (CASE WHEN (array_agg(DISTINCT name))[1] IS NULL THEN NULL
-    ELSE string_agg(DISTINCT osm_id,',')
+    ELSE array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',')
   END) AS osm_id,
 {% else %}
   string_agg(DISTINCT osm_id,',') AS osm_id,
@@ -1078,39 +1073,56 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_place(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_place
 AS $$
-SELECT * FROM (
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  name,capital,class,iso_a2,
+  (ntile(9) OVER (ORDER BY score DESC))::int+1 AS rank,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+FROM (
   SELECT
 {% if with_osm_id %} (CASE
       WHEN tablefrom='point' THEN 'n'||osm_id
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
       WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
     END) AS osm_id, {% endif %}
-    name,admin_level::integer AS capital,place AS class,
-    (tags->'ISO3166-1') AS iso_a2,
-    (CASE WHEN way_area IS NULL
-        THEN {{omt_func_pref}}_get_point_admin_enclosing_rank(osm_id)
-      ELSE {{omt_func_pref}}_get_rank_by_area(way_area) END)+{{omt_func_pref}}_adjust_rank_by_class(place) AS rank,
-    ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
-      WHEN tablefrom='polygon' THEN ST_Centroid(way) END),bounds_geom) AS geom
+    name,admin_level::integer AS capital,place AS class,iso_a2,
+    -- 1e3*1.9^(mlt^1.08)
+    (power(1.9,power({{omt_func_pref}}_get_place_multiplier(place),1.08))::int*1e3+
+      capital_score*3e6+province_score*2e6+(coalesce(population::int,0))) AS score,
+    (CASE WHEN tablefrom='point' THEN way
+      WHEN tablefrom='polygon' THEN ST_Centroid(way) END) AS way
   FROM (
-    SELECT {{polygon.osm_id}}, -- EVEN if without osm_id : for get_point_admin_enclosing
+    SELECT
+{% if with_osm_id %} {{polygon.osm_id}}, {% endif %}
       {{polygon.name}},{{polygon.place}},{{polygon.admin_level}},
-      {{polygon.tags}},{{polygon.way}},
-      {{polygon.way_area}},'polygon' AS tablefrom
+      COALESCE({{polygon.iso3166_1_alpha2_v}},{{polygon.iso3166_1_v}},{{polygon.country_code_fips_v}}) AS iso_a2,
+      {{polygon.way}},
+      -- 1 if place is a capital
+      coalesce({{polygon.capital_ctv}}='yes',({{polygon.admin_level_v}}::int<=2),false)::int AS capital_score,
+      -- 1 if place is a province capital
+      coalesce({{polygon.admin_centre_4_v}}='yes',({{polygon.admin_level_v}}::int<=4),
+        false)::int AS province_score,
+      {{polygon.population_ct}},'polygon' AS tablefrom
     FROM {{polygon.table_name}}
     WHERE {{polygon.place_v}} IN ('island')
     UNION ALL
-    SELECT {{point.osm_id}},
-      {{point.name}},{{point.place}},{{point.admin_level}},{{point.tags}},
+    SELECT
+{% if with_osm_id %} {{point.osm_id}}, {% endif %}
+      {{point.name}},{{point.place}},{{point.admin_level}},
+      COALESCE({{point.iso3166_1_alpha2_v}},{{point.iso3166_1_v}},{{point.country_code_fips_v}}) AS iso_a2,
       {{point.way}},
-      {{omt_func_pref}}_get_point_admin_parent_area({{point.osm_id_v}}) AS way_area,
-      'point' AS tablefrom
+      coalesce({{point.capital_ctv}}='yes',({{point.admin_level_v}}::int<=2),false)::int AS capital_score,
+      coalesce({{point.admin_centre_4_v}}='yes',({{point.admin_level_v}}::int<=4),false)::int AS province_score,
+      {{point.population_ct}},'point' AS tablefrom
     FROM {{point.table_name}}
     WHERE {{point.place_v}} IN ('continent','country','state','province','city','town','village',
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place
     WHERE ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
-  WHERE (z>=14) OR (12<=z AND z<14 AND rank<=8) OR (10<=z AND z<12 AND rank<=5) OR (10>z AND rank<=4);
+  WHERE (z>=12)
+    OR (z>=10 AND z<12 AND {{omt_func_pref}}_get_place_multiplier(class)>3)
+    OR (z>=07 AND z<10 AND {{omt_func_pref}}_get_place_multiplier(class)>6)
+    OR (z<07 AND {{omt_func_pref}}_get_place_multiplier(class)>7);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1419,7 +1431,9 @@ FROM
     OR man_made IN ('tower')
 		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class
 ) AS without_rank
-WHERE (z>=14) OR class IN ('hospital','railway','bus','attraction');
+WHERE (z>=14)
+  OR (z<14 AND z>=13 AND class IN ('hospital','railway','bus','attraction'))
+  OR (z<13 AND (class IN ('hospital','bus','attraction') OR (class='railway' AND subclass='station')));
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

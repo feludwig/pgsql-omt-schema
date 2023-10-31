@@ -41,6 +41,7 @@ class GeoTable() :
                 self.__dict__[k]=f'{self.table_name}."{self.aliased(colname)}" AS {self.refer(colname)}'
                 tg=tags_column+f"->'{self.aliased(colname)}'"
                 self.__dict__[k+'_ct']=f'COALESCE({self.table_name}."{self.aliased(colname)}",{tg}) AS {self.refer(colname)}'
+                self.__dict__[k+'_ctv']=f'COALESCE({self.table_name}."{self.aliased(colname)}",{tg})'
                 self.__dict__[k+'_v']=f'{self.table_name}."{self.aliased(colname)}"'
                 self.__dict__[k+'_ne']=f'({self.table_name}."{self.aliased(colname)}" IS NULL)'
                 self.__dict__[k+'_e']=f'({self.table_name}."{self.aliased(colname)}" IS NOT NULL)'
@@ -51,6 +52,7 @@ class GeoTable() :
                 self.__dict__[k]='('+tags_column+f"->'{self.aliased(colname)}') AS {self.refer(colname)}"
                 self.__dict__[k+'_ct']=self.__dict__[k]
                 self.__dict__[k+'_v']='('+tags_column+f"->'{self.aliased(colname)}')"
+                self.__dict__[k+'_ctv']=self.__dict__[k+'_v']
                 self.__dict__[k+'_e']='('+tags_column+f"?'{self.aliased(colname)}')"
                 self.__dict__[k+'_ne']=f"(NOT {self.__dict__[k+'_e']})"
 
@@ -96,6 +98,9 @@ aliases={
         'housenumber':'addr:housenumber',
         'aerodrome_type':'aerodrome:type',
         'tower_type':'tower:type',
+        'admin_centre_4':'admin_centre:4',
+        'iso3166_1_alpha2':'ISO3166-1:alpha2',
+        'iso3166_1':'ISO3166-1',
     },
     'line':{
         'housenumber':'addr:housenumber',
@@ -109,6 +114,9 @@ aliases={
         'building_levels':'building:levels',
         'building_part':'building:part',
         'tower_type':'tower:type',
+        'admin_centre_4':'admin_centre:4',
+        'iso3166_1_alpha2':'ISO3166-1:alpha2',
+        'iso3166_1':'ISO3166-1',
     },
 }
 
@@ -121,7 +129,9 @@ need_columns={
         'leisure', 'historic', 'indoor', 'aerodrome_type',
         'aeroway', 'iata', 'icao', 'wikipedia', 'wikidata',
         'ele', 'natural', 'ref', 'man_made', 'tower_type',
-        'start_date',
+        'start_date', 'admin_centre_4', 'population',
+        'iso3166_1_alpha2','iso3166_1','country_code_fips',
+        'capital',
 
         'way', 'tags', 'osm_id',
     ),
@@ -150,7 +160,9 @@ need_columns={
         'ele', 'wetland', 'housenumber', 'building_levels',
         'building_part', 'min_height', 'height', 'location',
         'man_made', 'tower_type', 'start_date', 'wikidata',
-        'wikipedia',
+        'wikipedia', 'admin_centre_4', 'population',
+        'iso3166_1_alpha2','iso3166_1','country_code_fips',
+        'capital',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

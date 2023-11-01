@@ -67,7 +67,7 @@ class Writer(threading.Thread) :
         threading.Thread.__init__(self)
         self.c=c
         self.finished=False
-        self.todo=queue.Queue(100)
+        self.todo=queue.Queue(maxsize=0) #infinite size
     def set_zooms(self,zs) :
         self.total_written={z:0 for z in zs}
         self.total_count={z:0 for z in zs}

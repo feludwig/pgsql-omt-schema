@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>pgsql-omt-schema demo</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css">
+  <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+  <style>
+    html, body, #map {
+      font-family: sans-serif;
+      height: 100%;
+      width: 100%;
+    }
+    body {
+      padding: 0;
+      margin: 0;
+    }
+    #map {
+      z-index: 1;
+    }
+    #meta {
+      background-color: rgba(255,255,255,0.75);
+      color: black;
+      z-index: 2;
+      position: absolute;
+      top: 3vw;
+      left: 3vw;
+      padding: 1vw 3vw;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="meta">
+    <p id="loading">Loading map...</p>
+    <p>Using the <a href="https://maplibre.org">MapLibre</a> library</p>
+    <p><input disabled type="checkbox" id="contourscheckbox"> Show contour lines</p>
+    <p><input disabled type="checkbox" id="tileboundscheckbox"> Show tile bounds</p>
+    <p><select type="options" id="styleselector">
+    </select></p>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="/demo/main.js"></script>
+</body>
+</html>

@@ -7,7 +7,7 @@
     "contours": {
       "type": "vector",
       "tiles":[ 
-        "https://<ADD HERE:hostname>/public.contours_vector/{z}/{x}/{y}.pbf"
+        "https://feludwig.github.io/pgsql-omt-schema/demo/tiles/contours/{z}/{x}/{y}.pbf"
       ],
       "maxzoom":15,
       "overzoom":1

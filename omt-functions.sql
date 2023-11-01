@@ -277,6 +277,8 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_text_to_int_null(data text) RETURNS
 AS $$
 SELECT CASE
   WHEN data~E'^\\d+$' THEN data::integer
+    -- also accept spaces within the number ['g' for global: replace ALL matches]
+  WHEN data~E'^(\\d+\\s*)+$' THEN regexp_replace(data,E'\\s','','g')::integer
   ELSE NULL END;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
@@ -1087,8 +1089,9 @@ FROM (
     END) AS osm_id, {% endif %}
     name,admin_level::integer AS capital,place AS class,iso_a2,
     -- 1e3*1.9^(mlt^1.08)
-    (power(1.9,power({{omt_func_pref}}_get_place_multiplier(place),1.08))::int*1e3+
-      capital_score*3e6+province_score*2e6+(coalesce(population::int,0))) AS score,
+    ((power(1.9,power({{omt_func_pref}}_get_place_multiplier(place),1.08))::int*1e3)+
+      --sqlglot does not like implicit a*b+c*d, instead (a*b)+(c*d)
+      (capital_score*3e6)+(province_score*2e6)+coalesce(population,0)) AS score,
     (CASE WHEN tablefrom='point' THEN way
       WHEN tablefrom='polygon' THEN ST_Centroid(way) END) AS way
   FROM (
@@ -1102,7 +1105,7 @@ FROM (
       -- 1 if place is a province capital
       coalesce({{polygon.admin_centre_4_v}}='yes',({{polygon.admin_level_v}}::int<=4),
         false)::int AS province_score,
-      {{polygon.population_ct}},'polygon' AS tablefrom
+      {{omt_func_pref}}_text_to_int_null({{polygon.population_ctv}}) AS population,'polygon' AS tablefrom
     FROM {{polygon.table_name}}
     WHERE {{polygon.place_v}} IN ('island')
     UNION ALL
@@ -1113,7 +1116,7 @@ FROM (
       {{point.way}},
       coalesce({{point.capital_ctv}}='yes',({{point.admin_level_v}}::int<=2),false)::int AS capital_score,
       coalesce({{point.admin_centre_4_v}}='yes',({{point.admin_level_v}}::int<=4),false)::int AS province_score,
-      {{point.population_ct}},'point' AS tablefrom
+      {{omt_func_pref}}_text_to_int_null({{point.population_ctv}}) AS population,'point' AS tablefrom
     FROM {{point.table_name}}
     WHERE {{point.place_v}} IN ('continent','country','state','province','city','town','village',
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')

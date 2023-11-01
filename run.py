@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import math
 import jinja2
 import psycopg2
 import sqlglot
@@ -73,6 +74,29 @@ class GeoTable() :
             raise KeyError(f'Error key "{self.table_name}".{k} not defined')
         return self.__dict__[k]
 
+# from https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames#Python
+def deg2num(lat_deg, lon_deg, zoom):
+  lat_rad = math.radians(lat_deg)
+  n = 1 << zoom
+  xtile = int((lon_deg + 180.0) / 360.0 * n)
+  ytile = int((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
+  return xtile, ytile
+
+def get_center_tile(c:psycopg2.extensions.cursor,osm_polygon_id:int,zoom=15)->(int,int,int) :
+    """ Returns z,x,y coordinates of tile over the centroid of the osm_polygon
+    """
+    q=c.mogrify('''SELECT ST_Y(a.a) AS lat,ST_X(a.a) AS lon
+        FROM (SELECT ST_Transform(st_centroid(way),4326)
+            FROM planet_osm_polygon WHERE osm_id=%s limit 1
+        )AS a(a);''',(osm_polygon_id,))
+    c.execute(q)
+    try :
+        lat,lon=c.fetchone()
+    except TypeError :
+        print('WARNING: polygon with id',osm_polygon_id,'not found in database',file=sys.stderr)
+        print('Using test tile',(zoom,0,0),file=sys.stderr)
+        return (zoom,0,0)
+    return (zoom,*deg2num(lat,lon,zoom))
 
 def make_global_dict(c:psycopg2.extensions.cursor,
         need_columns:typing.Dict[str,typing.Collection[str]],
@@ -447,7 +471,8 @@ if __name__=='__main__' :
         loader=jinja2.FileSystemLoader(os.path.dirname(__file__)),
     )
     tmpl_defined=make_global_dict(c,need_columns,aliases)
-    tmpl_defined={**tmpl_defined,**TEMPLATE_VARS}
+    test_tile=dict(zip(('test_z','test_x','test_y'),get_center_tile(c,-51701,12)))
+    tmpl_defined={**tmpl_defined,**TEMPLATE_VARS,**test_tile}
     e.globals=tmpl_defined
     sql_functions_script=render_template_file('omt-functions.sql')
     sql_views_script=render_template_file('omt-views.sql')
@@ -474,5 +499,6 @@ if __name__=='__main__' :
     else :
         run_sql_script(c,sql_views_script)
         run_sql_script(c,sql_functions_script)
+        print('test tile',[tmpl_defined['test_'+k] for k in 'zxy'])
         print_stats(c)
         c.execute('COMMIT;')

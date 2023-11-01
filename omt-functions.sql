@@ -326,6 +326,8 @@ $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
 
+
+
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landuse(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_landuse
 AS $$
@@ -1658,5 +1660,5 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 
-SELECT pcent,bytes,pretty_bytes,name,rowcount FROM {{omt_all_func}}_with_stats(15,17151,11469);
+SELECT pcent,bytes,pretty_bytes,name,rowcount FROM {{omt_all_func}}_with_stats({{test_z}},{{test_x}},{{test_y}});
 

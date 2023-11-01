@@ -239,10 +239,10 @@ function switch_style_over(tgt_index) {
 function main() {
   document.styles=[
     // take the first as default on load
-    {name:'OpenStreetMap Carto',href:'styles/openstreetmap-vector.json'},
-    {name:'OSM Bright',href:'styles/osm-bright.json'},
-    {name:'MapTiler Basic',href:'styles/maptiler-basic.json'},
-    {name:'OSM Bright cyclo',href:'styles/cyclo-bright.json'},
+    {name:'OpenStreetMap Carto',href:'demo/styles/openstreetmap-vector.json'},
+    {name:'OSM Bright',href:'demo/styles/osm-bright.json'},
+    {name:'MapTiler Basic',href:'demo/styles/maptiler-basic.json'},
+    {name:'OSM Bright cyclo',href:'demo/styles/cyclo-bright.json'},
   ];
   try {
     document.map = new maplibregl.Map({

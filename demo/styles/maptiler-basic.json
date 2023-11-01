@@ -20,7 +20,7 @@
     }
   },
   "COMMENT":"(c) fonts from https://github.com/openmaptiles/fonts",
-  "glyphs": "/demo/fonts/{fontstack}/{range}.pbf",
+  "glyphs": "https://feludwig.github.io/pgsql-omt-schema/demo/fonts/{fontstack}/{range}.pbf",
   "layers": [
     {
       "id": "background",

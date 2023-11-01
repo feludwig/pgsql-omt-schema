@@ -12,6 +12,29 @@ import uuid
 import re
 import os
 
+"""
+argparse TODO:
+    * argument test_osm_rel_id for where the test tile should be located
+    * argument dsn
+    * argument action:
+        - create [create or replace all omt-schema functions]
+        - create-print
+        - index [create all indexes]
+        - index-print
+        - index-drop [drop all indexes]
+        - view [create materialized view]
+        - contours [create or replace the contours function]
+        ...
+    * HOWTO template vars configure:
+        - add explainer to edit the run.py TEMPLATE_VARS={} dict manually if more functionality
+        - selected arguments:
+            --osm-ids {default_false}
+            --typ-pref [prefix for typenames]
+            --func-pref [prefix]
+            --all-pref [prefix] TODO: remove and use {{omt_func_pref}}_all ?
+            --view-pref [prefix]
+
+"""
 
 class GeoTable() :
     def __init__(self,c:psycopg2.extensions.cursor,table_oid:int,

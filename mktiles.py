@@ -6,43 +6,69 @@ import os
 import time
 import threading
 import queue
+import typing
 printer_lock=threading.Lock()
 
 import run #local
 
-dbaccess,z,x,y,outdir=sys.argv[1:]
+format='pbf'
+
 
 #maximally parallelize database:new connections only
 def make_new_connection_cursor() :
     access=psycopg2.connect(dbaccess)
     return access.cursor()
 
-format='pbf'
+def gen_zxy_readinput()->typing.Iterator[[int,int,int]] :
+    while True :
+        try :
+            line=input()
+        except EOFError :
+            #finished
+            return
+        z,x,y=line.split(' ')
+        yield (int(z),int(x),int(y))
 
-if z.find('-')>=0 :
-    # z range, x and y are specified for starting zoom!
-    zs=list(range(*map(int,z.split('-'))))
-else :
-    zs=[int(z)]
-if x.find('-')>=0 :
-    xs=list(range(*map(int,x.split('-'))))
-elif x=='*' :
-    xs=list(range(2**zs[0]))
-else :
-    xs=[int(x)]
-if y.find('-')>=0 :
-    ys=list(range(*map(int,y.split('-'))))
-elif y=='*' :
-    ys=list(range(2**zs[0]))
-else :
-    ys=[int(y)]
+def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
+    if z.find('-')>=0 :
+        # z range, x and y are specified for starting zoom!
+        zs=list(range(*map(int,z.split('-'))))
+        #inclusive range
+        zs.append(zs[-1]+1)
+    else :
+        zs=[int(z)]
+    if x.find('-')>=0 :
+        xs=list(range(*map(int,x.split('-'))))
+        #inclusive range
+        xs.append(xs[-1]+1)
+    elif x=='*' :
+        xs=list(range(2**zs[0]))
+    else :
+        xs=[int(x)]
+    if y.find('-')>=0 :
+        ys=list(range(*map(int,y.split('-'))))
+        #inclusive range
+        ys.append(ys[-1]+1)
+    elif y=='*' :
+        ys=list(range(2**zs[0]))
+    else :
+        ys=[int(y)]
+    for z in zs :
+        scale=2**(z-zs[0])
+        for xr in xs :
+            for x in range(xr*scale,(xr+1)*scale) :
+                for yr in ys :
+                    for y in range(yr*scale,(yr+1)*scale) :
+                        yield (z,x,y)
+
 
 class Writer(threading.Thread) :
-    def __init__(self,c,zs) :
+    def __init__(self,c) :
         threading.Thread.__init__(self)
         self.c=c
         self.finished=False
         self.todo=queue.Queue(100)
+    def set_zooms(self,zs) :
         self.total_written={z:0 for z in zs}
         self.total_count={z:0 for z in zs}
         self.per_layer_stats={z:{} for z in zs}
@@ -80,6 +106,8 @@ class Writer(threading.Thread) :
 
 
     def run(self) :
+        msg='Need to run .set_zooms before starting'
+        assert hasattr(self,'total_count'),msg
         while True :
             z,x,y=self.todo.get(block=True)
             #check end sentinel
@@ -131,29 +159,42 @@ class Writer(threading.Thread) :
             print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes')
 
 
-ts=[Writer(make_new_connection_cursor(),zs) for i in range(5)]
+dbaccess,mode,outdir,*more=sys.argv[1:]
+if mode=='--range' :
+    z,x,y=more
+    tiles_generator=gen_zxy_range(z,x,y)
+elif mode=='--list' :
+    tiles_generator=gen_zxy_readinput()
+else :
+    print('unrecognized mode')
+    exit(1)
+
+
+
+ts=[Writer(make_new_connection_cursor()) for i in range(5)]
 
 start=time.time()
-[t.start() for t in ts]
-tix=0
-for z in zs :
-    scale=2**(z-zs[0])
-    for xr in xs :
-        for x in range(xr*scale,(xr+1)*scale) :
-            for yr in ys :
-                for y in range(yr*scale,(yr+1)*scale) :
-                    ts[(tix)%len(ts)].todo.put((z,x,y))
-                    tix+=1
 
+tix=0
+encountered_zooms=set()
+for tile_item in tiles_generator :
+    z=tile_item[0]
+    encountered_zooms.add(z)
+    ts[(tix)%len(ts)].todo.put(tile_item)
+    tix+=1
+
+[t.set_zooms(encountered_zooms) for t in ts]
+[t.start() for t in ts]
+#working...
 [t.join() for t in ts]
 
-total_z_bytes={z:sum(t.total_written[z] for t in ts) for z in zs}
+total_z_bytes={z:sum(t.total_written[z] for t in ts) for z in encountered_zooms}
 total_bytes=sum([v for z,v in total_z_bytes.items()])
-total_z_count={z:sum(t.total_count[z] for t in ts) for z in zs}
+total_z_count={z:sum(t.total_count[z] for t in ts) for z in encountered_zooms}
 print(total_z_count)
 total_count=sum(total_z_count.values())
 print(round(total_bytes*1e-6,2),'MB total written')
-for z in zs :
+for z in encountered_zooms :
     print(f'z{z:02}:')
     Writer.print_layer_stats(make_new_connection_cursor(),ts,z)
     if total_z_count[z]==0 :

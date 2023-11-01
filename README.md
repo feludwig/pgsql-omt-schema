@@ -88,8 +88,9 @@ can take a long time to generate.
 this will output some `NOTICE`s...
 
 
-At the end, a `length` with nonzero length should be generated if you have Switzerland
-maps data at Weiningen (hardcoded `z/x/y` of `15/17151/11469`), else just a `length` of `0`.
+At the end, a statistics table should be printed, with nonzero values if you have Switzerland
+in the database (takes `z/x/y` from the center point of Switzerland),
+else the test tile will just be `x=0, y=0` with probably empty data.
 
 
 ### `pg_tileserv`
@@ -97,7 +98,7 @@ maps data at Weiningen (hardcoded `z/x/y` of `15/17151/11469`), else just a `len
 [pg\_tileserv](https://github.com/CrunchyData/pg_tileserv)
 and give it the database connection configuration.
 * Important: Visit the `pg_tileserv` url root, and you should see `omt_all` under the
-_Function Layers_ section (`pg_tileserv` needs to detect that is exists).
+_Function Layers_ section (`pg_tileserv` needs to detect that it exists).
 
 ### Indexes
 

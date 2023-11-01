@@ -53,7 +53,7 @@ the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 ### Tile size across zoom
 
 Zoom range|Server usability|Client usability
----|---
+---|---|---
 0-4|only `mktiles.py`: `pg_tileserv` IO errors|unusable, easily surpasses 10MB/tile.
 5-7|only `mktiles.py`, multiple minutes/tile at least|usually above 1MB/tile but can be looked at with patience
 8-11|highly recommend file caching, `mktiles.py` or `pg_tileserv`, multiple seconds/tile|rendering is long because of tilesize ~ 200 to 2500 KB/tile

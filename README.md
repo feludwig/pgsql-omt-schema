@@ -13,9 +13,14 @@ in the openmaptiles vectortile schema
 This can then be used by multiple styles to render beautiful vector maps in the
 client browser.
 
-### OMT styles
+### Demo
 
-A little selection of styles
+[Browse the interactive map](https://feludwig.github.io/pgsql-omt-schema)
+
+with all [attributions](demo/README.md)
+
+
+A little selection of omt-schema compatible styles
 * [OSM](https://github.com/openmaptiles/openmaptiles/tree/master/style) an adaptation
 of the raster [OSM Carto](https://github.com/gravitystorm/openstreetmap-carto) from the
 homepage of [openstreetmap](https://www.openstreetmap.org).

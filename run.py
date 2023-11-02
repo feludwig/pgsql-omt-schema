@@ -34,6 +34,9 @@ argparse TODO:
             --all-pref [prefix] TODO: remove and use {{omt_func_pref}}_all ?
             --view-pref [prefix]
 
+DEMO TODO:
+    also generate contours tiles: make mktiles parametrizable, run it twice
+
 """
 
 class GeoTable() :

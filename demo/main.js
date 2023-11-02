@@ -6,7 +6,7 @@ function popup_text(f) {
 
 function enable_contours() {
   // append contours to current map
-  fetch('styles/contours.json').then(r=>r.json()).then(function(c) {
+  fetch('demo/styles/contours.json').then(r=>r.json()).then(function(c) {
     Object.keys(c.sources).forEach(k=>{
         document.map.addSource(k,c.sources[k]);
     });

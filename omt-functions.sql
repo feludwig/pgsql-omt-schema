@@ -34,6 +34,9 @@
 --  * boundary: read from matview country_boundaries
 --  * transportation separate transportation_name layer earlier, in the aggregation phase
 --    - DONE, and: optimize transportation and transportation_name separately
+--    -> transportation_name st_tilenmerge don't care aboud directions of lines
+--    -> same ides: minimum tolerance for st_collectoverlapping ? to join the
+--        two lanes of motorways into one at z<10
 --  * poi sophisticated filtering PARTITION BY class,
 --    eg: among all hospitals, take only the 5 biggest
 --  * landcover: ST_SimplifyPreserveTopology works well, find the correct exponential factor

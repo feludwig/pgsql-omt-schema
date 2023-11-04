@@ -16,8 +16,7 @@ client browser.
 ### Demo
 
 [Browse the interactive vector map](https://feludwig.github.io/pgsql-omt-schema)
-
-with all [attributions](demo)
+with all these [attributions](demo)
 
 
 A little selection of omt-schema compatible styles
@@ -47,24 +46,32 @@ homepage of [openstreetmap](https://www.openstreetmap.org).
   - `pip install psycopg2` for autodetecting tables and their columns in database
   - `pip install jinja2` for templating support, autodetected column names and types
   - `pip install sqlglot` for `--index` autogeneration, optional but highly recommended
-for perfomance
+for a little more perfomance
 
-* `osm2pgsql` was run with `--hstore` containing all missing tags. For now, a mix
-of database columns and `tags->'colname'` accesses happen.
-Maybe this can all be summarized in a `.style` file for osm2pgsql; but applying it
-would require a reimport.
+* `osm2pgsql` was run with `--hstore` containing all missing tags. A mix
+of database columns and `tags->'colname'` accesses are needed. This is not strictly
+necessary but if features have missing crucial columns like `highway` or `natural`,
+theys will just be ignored in the sql.
+This can all be summarized in a `.style` file for osm2pgsql; but applying it
+would require a reimport: not the point of this project. A description
+of all needed columns is in the [run.py](run.py) driver, `need_columns` and `aliases`.
 
 * Tables `*_point`, `*_line` and `*_polygon` exist,
  and you have these permissions:
   - `SELECT`,
   - `CREATE/DROP TYPE`,
-  - `CREATE/DROP INDEX`,
+  - `CREATE/DROP INDEX` (optional),
   - `CREATE OR REPLACE FUNCTION`, and
   - `CREATE/DROP (MATERIALIZED) VIEW`
 * The tables are found **by suffix**,
 the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 * All concerned geometry tables have their geometry column called `way`
   - (**planned**: just read `geometry_columns` table for the `way` column's name).
+* Your data is in english, if you imported custom data in german for example, `'attraktion'` in the
+  column `tourismus` will **not** be recognized as a `tourism=attraction` and be ignored.
+  Feature names are obviously recognized, but using `nein` and `ja` instead of `no` and `yes` for
+  boolean values like `indoor` is not planned for and will fallback to `NULL` or false.
+
 
 # Status
 
@@ -74,13 +81,13 @@ Zoom range|Server usability|Client usability
 ---|---|---
 0-4|only `mktiles.py`: `pg_tileserv` IO errors|unusable, easily surpasses 10MB/tile.
 5-7|only `mktiles.py`, multiple minutes/tile at least|usually above 1MB/tile but can be looked at with patience
-8-11|highly recommend file caching, `mktiles.py` or `pg_tileserv`, multiple seconds/tile|rendering is long because of tilesize ~ 200 to 2500 KB/tile
-12-15|live serving possible, size is usually <500KB/tile mapbox recommendation|rendering is responsive
+8-10|highly recommend file caching, `mktiles.py` or `pg_tileserv`, multiple seconds/tile|rendering is long because of tilesize ~ 200 to 2500 KB/tile
+11-15|live serving possible, size is usually <500KB/tile mapbox recommendation|rendering is responsive
 16-22|no work to do|excellent: no need for network once z15 visited
 
 ### Not finished
 
-* some layers' data needs to be queried from different tables (line,point,polygon) where it
+* some layers' data needs to be queried from multiple different tables (line,point,polygon) where it
 currently only is queried from one
 * `run.py` argparse clean up CLI API
 * `run.py` template configuration: just editing the source is clumsy at best
@@ -101,9 +108,11 @@ can take a long time to generate.
 
 ### Create the SQL functions
 
-`python3 run.py 'dbname=gis port=5432'`
+```
+python3 run.py 'dbname=gis port=5432'
+```
 
-this will output some `NOTICE`s...
+this will print some `NOTICE`s...
 
 
 At the end, a statistics table should be printed, with nonzero values if you have Switzerland
@@ -128,15 +137,15 @@ to run (up to 1h30-2h per piece on a planet database;
 there are around 25 of them, so up to 50h)
 
 * If you want to read them through before:
-* `python3 run.py 'dbname=gis port=5432' --index-print`
+* ```python3 run.py 'dbname=gis port=5432' --index-print```
 
-
-`python3 run.py 'dbname=gis port=5432' --index`
-
+```
+python3 run.py 'dbname=gis port=5432' --index
+```
 
 __Note__: The index creation will block all writes to the currently indexing table.
 Change `CREATE INDEX` to `CREATE INDEX CONCURRENTLY` if you wish to still write while
-indexing. This has the tradeoff of being much slower (up to 3h per piece)
+indexing. This has the tradeoff of being much slower (up to 3h per piece on a planet db)
 
 
 __Note__: You can run
@@ -199,11 +208,15 @@ These lower zoom tiles also need to query a lot of data and so take multiple sec
 to generate, this is not comfortable for viewing.
 
 ```
-python3 mktiles.py 'dbname=gis port=5432' --range {z} {x} {y} {/path/to/file/cache}
+python3 mktiles.py 'dbname=gis port=5432' --range {/path/to/file/cache} {z} {x} {y}
 ```
 or
 ```
-python3 mktiles.py 'dbname=gis port=5432' --range {z}-{zEnd} {xmin}-{xmax} {ymin}-{ymax} {/path/to/file/cache}
+python3 mktiles.py 'dbname=gis port=5432' --range {/path/to/file/cache} {z}-{zEnd} {xmin}-{xmax} {ymin}-{ymax}
+```
+or
+```
+python3 mktiles.py 'dbname=gis port=5432' --list {/path/to/file/cache} < tiles_to_generate
 ```
 
 ## Options
@@ -225,14 +238,14 @@ Not the omt schema, but still a rich addition to any map: elevation, represented
 The `contours-function.sql` creates a `pg_tileserv`
 compatible sql function that returns data from a contours lines database
 ([setup guide](https://wiki.openstreetmap.org/wiki/Contour_relief_maps_using_mapnik#The_PostGIS_approach)).
-See [demo](#Demo) for implementation, with a stylesheet [demo/styles/contours.json](demo/styles/contours.json)
-, adapted from the `contours.xml` in that guide.
+See [demo](#Demo) for implementation, with a stylesheet
+[demo/styles/contours.json](demo/styles/contours.json), adapted from the `contours.xml` in that guide.
 This is independent of the omt-schema.
 
 ## Javascript
 
 The contours layer alone is not useful. Add the following javascript to
-"append" contours to an already existing layer :
+"append" contours to an already existing layer (present in [demo/main.js](demo/main.js)):
 ```
 document.map.on('load',function() {
   fetch('contours.json').then(r=>r.json()).then(function(c) {
@@ -269,7 +282,7 @@ only considering data from the `imposm3` schema.
 
 
 Also, this "adapting" from one table layout to the other is difficult and will always be a
-moving target. For now this script is best-effort and I try do document
+moving target. This script is best-effort and I try do document
 differences. Changes requiring significant performance loss will probably not
 be considered.
 
@@ -323,6 +336,6 @@ it's showing almost nothing right now.
 - Some styles use `"name:latin"` and `"name:nonlatin"`, which is not in the spec.
 Currently, `name_en` and `name_de` are not created, and only `name` is used.
 To create `"name:latin"`, see template definition comments.
-  * Another option to alias feature name data as "name:latin" data is to do so client-side:
+  * Another option to alias feature `name` data as `"name:latin"` data is to do so client-side:
 see provided [demo/main.js](demo/main.js), function `set_name_property` for a sample.
 

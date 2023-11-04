@@ -2,11 +2,6 @@
   "version": 8,
   "name": "OSM OpenMapTiles",
   "id": "openmaptiles",
-  "center": [
-    0,
-    0
-  ],
-  "zoom": 1,
   "bearing": 0,
   "pitch": 0,
   "sources": {
@@ -44,6 +39,7 @@
       "source-layer": "landuse",
       "minzoom": 7,
       "layout": {
+        "fill-sort-key": ["match",["get","class"],"pitch",2,1],
         "visibility": "visible"
       },
       "paint": {
@@ -71,6 +67,8 @@
           "#ffd6d1",
           "bus_station",
           "#e9e7e2",
+          "#aae0cb",
+          "#aae0cb",
           "school",
           "#ffffe5",
           "university",
@@ -1019,7 +1017,7 @@
       "source-layer": "park",
       "minzoom": 10,
       "layout": {
-        "visibility": "none"
+        "visibility": "visible"
       },
       "paint": {
         "line-color": "rgba(93, 156, 76, 1)",
@@ -9429,7 +9427,7 @@
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "poi",
-      "minzoom": 15,
+      "minzoom": 14,
       "layout": {
         "text-font": [
           "Noto Sans Bold"
@@ -9489,6 +9487,7 @@
           "art_gallery",
           "music",
           "alcohol_shop",
+          "grocery",
           "bakery"
         ],
         [
@@ -9496,7 +9495,8 @@
           "subclass",
           "mall",
           "library",
-          "artwork"
+          "artwork",
+          "supermarket"
         ]
       ]
     },
@@ -9505,7 +9505,7 @@
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "poi",
-      "minzoom": 15,
+      "minzoom": 14,
       "layout": {
         "text-font": [
           "Noto Sans Bold"
@@ -9522,8 +9522,8 @@
             ]
           ]
         },
-        "icon-image": "{subclass}",
-        "text-field": "{name:latin}\n{name:nonlatin}",
+        "icon-image": ["step",["zoom"],"purple_dot",15,["get","subclass"]],
+        "text-field": ["step",["zoom"],"",16,["concat",["get","name:latin"],"\n",["get","name:nonlatin"]]],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [
@@ -9568,7 +9568,7 @@
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "poi",
-      "minzoom": 18,
+      "minzoom": 14,
       "layout": {
         "text-font": [
           "Noto Sans Bold"
@@ -9576,7 +9576,7 @@
         "text-size": {
           "stops": [
             [
-              15,
+              14,
               10
             ],
             [
@@ -9585,8 +9585,9 @@
             ]
           ]
         },
+        "symbol-sort-key": ["match",["get","class"],"drinking_water",2,"waste_basket",1,3],
         "icon-image": "{subclass}",
-        "text-field": "{name:latin}\n{name:nonlatin}",
+        "text-field": ["step",["zoom"],"",16,["concat",["get","name:latin"],"\n",["get","name:nonlatin"]]],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [
@@ -10025,7 +10026,7 @@
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "poi",
-      "minzoom": 15,
+      "minzoom": 14,
       "layout": {
         "text-font": [
           "Noto Sans Bold"
@@ -11437,7 +11438,7 @@
       ]
     },
     {
-      "id": "highway-shield-motorway",
+      "id": "highway-shield-motorway-trunk",
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "transportation_name",
@@ -11463,7 +11464,7 @@
             ]
           ]
         },
-        "icon-image": "road_motorway",
+        "icon-image": "road_{class}",
         "text-field": "{ref}",
         "visibility": "visible",
         "icon-anchor": "center",
@@ -11507,9 +11508,10 @@
           "LineString"
         ],
         [
-          "==",
+          "in",
           "class",
-          "motorway"
+          "motorway",
+          "trunk"
         ],
         [
           "has",

@@ -25,14 +25,35 @@ which is an adaptation of the raster stylesheet
 
 <https://github.com/gravitystorm/openstreetmap-carto>
 
-And I added a few adjustments:
-* show an `orrange_dot` or `purple_dot` for restaurants/shops respectively at z15, like raster style
-* `mountain_peak` text format when elevation is null
+And I added some adjustments:
+* show an `orange_dot` or `purple_dot` for restaurants/shops respectively at z14, like raster style
+* and hide names at those z14-z17. Also with more finegrained icon resolving for specific classes
+* correct colour of `bus_stop_square`, and change zoom-behaviour similarly
+to `orange_dot` and `purple_dot`
+* various additional sprites:
+  - ref shield for `class=trunk` (`road_trunk`) in `transportation_name`
+  - `fountain` in `poi`
+  - duplicate `diy` to `doityourself`, inconsistent naming in the data...
+* `mountain_peak` text format when elevation is null: do not show stray "m"
+* manually setting `class=pitch` in layer `landuse` to be over `class=residential`, not under
+* `tower_obervation` and more specific towers, refined from `viewpoint`
+* `class=information` specificities like `subclass=guidepost` or `subclass=board` in `poi`
+* show pois more aggressively even at low zooms
 * miscellaneous zoom-stepping (newer syntax with `["step",["zoom"],"",15,["get","name"]]`)
+
+
+The sprites are also incompatible with spritezero in some environments, regarding embedding
+href="data:text/base64,aaaaaa" binary data inline: for putting a png into an svg.
+This is the case for `wetland_mangrove` and similar. Using `ffmpeg` and then `spritezero-png`
+works, but involves generating sprites twice individually (for `@2x.png` and `.png`).
 
 ### osm-bright
 
 <https://github.com/openmaptiles/osm-bright-gl-style>
+
+
+Has a horrible rank out-of-specification behaviour: filter based on 15 < rank < 25 !?
+This then hides almost all pois on high zoom
 
 ### maptiler-basic
 

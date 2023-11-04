@@ -181,7 +181,7 @@ need_columns={
         'ele', 'natural', 'ref', 'man_made', 'tower_type',
         'start_date', 'admin_centre_4', 'population',
         'iso3166_1_alpha2','iso3166_1','country_code_fips',
-        'capital',
+        'capital', 'information',
 
         'way', 'tags', 'osm_id',
     ),
@@ -212,7 +212,7 @@ need_columns={
         'man_made', 'tower_type', 'start_date', 'wikidata',
         'wikipedia', 'admin_centre_4', 'population',
         'iso3166_1_alpha2','iso3166_1','country_code_fips',
-        'capital',
+        'capital', 'information',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

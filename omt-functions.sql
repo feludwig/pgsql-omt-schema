@@ -776,6 +776,7 @@ FROM (
     (CASE
       WHEN {{line.highway_v}} = 'construction' THEN (CASE
           WHEN {{line.construction_v}} IN ('motorway','motorway_link') THEN 'motorway_construction'
+          WHEN {{line.construction_v}} IN ('trunk','trunk_link') THEN 'trunk_construction'
           WHEN {{line.construction_v}} IN ('primary','primary_link') THEN 'primary_construction'
           WHEN {{line.construction_v}} IN ('secondary','secondary_link') THEN 'secondary_construction'
           WHEN {{line.construction_v}} IN ('tertiary','tertiary_link') THEN 'tertiary_construction'
@@ -951,7 +952,9 @@ SELECT
   max(indoor) AS indoor,
   ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
 FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
-WHERE ref IS NOT NULL AND class IN ('motorway') -- at z<=10, only show motorway refs
+WHERE ref IS NOT NULL AND (
+  (z<=09 AND class IN ('motorway')) -- at z<=09, only show motorway refs
+  OR (z>09 AND z<=10 AND class IN ('motorway','primary','trunk')))
 GROUP BY(class,subclass,ref);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1252,6 +1255,9 @@ FROM
       -- take only starting alphanumeric chars: stop at first '_'
       -- eg 'cave_entrance' -> 'cave'
       THEN (regexp_match(COALESCE(amenity,"natural",man_made,'photo'),E'^[a-zA-Z0-9]+'))[1]
+    WHEN subclass IN ('information')
+      THEN information
+    WHEN subclass='fire_station' THEN 'firestation'
     ELSE subclass
   END) AS subclass,
   agg_stop,level,layer,indoor,score,start_date_year,
@@ -1342,7 +1348,7 @@ FROM
     -- used for rewriting subclass
     -- natural in quotes because it's also a numbertype: to not trip up postgres
     amenity,"natural",man_made,
-    start_date_year,score,
+    start_date_year,score,information,
 		ST_AsMVTGeom(way,bounds_geom) AS geom
 	FROM (
     SELECT
@@ -1356,6 +1362,8 @@ FROM
       -- EXTENSION
       ({{point.man_made_v}}||COALESCE('_'||{{point.tower_type_v}},'')) AS man_made,
       {{omt_func_pref}}_get_start_date_year({{point.start_date_v}}) AS start_date_year,
+      -- MORE SPECIFIC
+      {{point.information}},
       {{point.way}},'point' AS tablefrom
     FROM {{point.table_name}}
     UNION ALL
@@ -1373,6 +1381,8 @@ FROM
       -- EXTENSION
       ({{polygon.man_made_v}}||COALESCE('_'||{{polygon.tower_type_v}},'')) AS man_made,
       {{omt_func_pref}}_get_start_date_year({{polygon.start_date_v}}) AS start_date_year,
+      -- MORE SPECIFIC
+      {{polygon.information}},
       {{polygon.way}},'polygon' AS tablefrom
     FROM {{polygon.table_name}}
     ) AS layer_poi
@@ -1419,6 +1429,7 @@ FROM
 		OR landuse IN ('basin','brownfield','cemetery','reservoir','winter_sports')
 		OR tourism IN ('alpine_hut','aquarium','artwork','attraction',
 			'bed_and_breakfast','camp_site','caravan_site','chalet','gallery',
+      -- 'information' :
 			'guest_house','hostel','hotel','information','motel','museum','picnic_site',
 			'theme_park','viewpoint','zoo')
 		OR barrier IN ('bollard','border_control','cycle_barrier','gate','lift_gate',

@@ -15,9 +15,9 @@ client browser.
 
 ### Demo
 
-[Browse the interactive map](https://feludwig.github.io/pgsql-omt-schema)
+[Browse the interactive vector map](https://feludwig.github.io/pgsql-omt-schema)
 
-with all [attributions](demo/README.md)
+with all [attributions](demo)
 
 
 A little selection of omt-schema compatible styles
@@ -27,6 +27,19 @@ homepage of [openstreetmap](https://www.openstreetmap.org).
 * [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
 * [Positron](https://github.com/openmaptiles/positron-gl-style)
 * [MapTiler Basic](https://github.com/openmaptiles/maptiler-basic-gl-style)
+
+#### Vector tile advantages over raster tiles
+
+* see [demo/main.js](demo/main.js) for samples
+* names of cities/roads/POIs etc can be switched over to other language
+  (or take local name and add english internationalized name in parens below)
+* elevation data can be displayed in a richer way than "just" contours or hillshades:
+  3d map (`add_relief` function)
+* map can be rotated and name labels stay, on mobile with two fingers and on the computer
+  with a right-click+hold-and-drag
+* zoom levels are not discrete steps, but can be in a smooth range (eg z=15.68, impossible on raster).
+  And the names/labels all scale continuously as well, instead of "jumping" in size like on a raster map
+
 
 # Requirements
 
@@ -185,8 +198,13 @@ Lower-zoom tiles contain data that changes rarely so they don't need to be rende
 These lower zoom tiles also need to query a lot of data and so take multiple seconds per tile
 to generate, this is not comfortable for viewing.
 
-
-`python3 mktiles.py 'dbname=gis port=5432' {z} {x} {y} {/path/to/file/cache}`
+```
+python3 mktiles.py 'dbname=gis port=5432' --range {z} {x} {y} {/path/to/file/cache}
+```
+or
+```
+python3 mktiles.py 'dbname=gis port=5432' --range {z}-{zEnd} {xmin}-{xmax} {ymin}-{ymax} {/path/to/file/cache}
+```
 
 ## Options
 
@@ -207,8 +225,9 @@ Not the omt schema, but still a rich addition to any map: elevation, represented
 The `contours-function.sql` creates a `pg_tileserv`
 compatible sql function that returns data from a contours lines database
 ([setup guide](https://wiki.openstreetmap.org/wiki/Contour_relief_maps_using_mapnik#The_PostGIS_approach)).
-The supplied [`contours.json`](contours.json) is a simple style for that, adapted from the `contours.xml`
-in the guide. This is independent of the omt-schema.
+See [demo](#Demo) for implementation, with a stylesheet [demo/styles/contours.json](demo/styles/contours.json)
+, adapted from the `contours.xml` in that guide.
+This is independent of the omt-schema.
 
 ## Javascript
 
@@ -240,7 +259,7 @@ Most guides to selfhost your own vectortiles recommend importing the database wi
 But I found nothing when data is already imported with `osm2pgsql` except
 for [this](https://github.com/MapServer/basemaps/blob/main/contrib/osm2pgsql-to-imposm-schema.sql)
 set of SQL tables. But those are not written with realtime rendering in mind, nor
-with updateability of the data (with `.osc` files).
+with updateability of the data (with `.osc` files that `osm2pgsql` reads in).
 
 
 These two tools produce a very different database table layout, and the main
@@ -298,13 +317,12 @@ but only when there are a lot of buildings around.
 - `ele_ft` column is omitted
 
 - The `rank` column is not clearly documented and I am just tweaking numbers untils it looks
-about right, for now.
+about right, for now. The OSM Bright style has some erratic behaviour on the poi layer with that,
+it's showing almost nothing right now.
 
-- The OSM Bright style uses `"name:latin"` and `"name:nonlatin"`, which is not in the spec.
+- Some styles use `"name:latin"` and `"name:nonlatin"`, which is not in the spec.
 Currently, `name_en` and `name_de` are not created, and only `name` is used.
 To create `"name:latin"`, see template definition comments.
-  * Another option to alias feature name data as "name:latin" data is to do so client-side.
-See provided [`set_name_property.js`](set_name_property.js) sample.
-
-
+  * Another option to alias feature name data as "name:latin" data is to do so client-side:
+see provided [demo/main.js](demo/main.js), function `set_name_property` for a sample.
 

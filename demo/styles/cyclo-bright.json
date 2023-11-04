@@ -6,6 +6,7 @@
   "sources": {
     "openmaptiles": {
       "type": "vector",
+      "attribution": "<a href=\"https://www.openmaptiles.org/\" target=\"_blank\">&copy; omt-schema: OpenMapTiles</a>, <a href=\"https://github.com/leonardehrenfried/cyclo-bright-gl-style\">&copy; stylesheet: @LeonardEhrenfried</a>, <a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\">&copy; data: OpenStreetMap contributors</a>",
       "tiles":[ 
         "https://feludwig.github.io/pgsql-omt-schema/demo/tiles/omt/{z}/{x}/{y}.pbf"
       ],

@@ -6,6 +6,7 @@
   "sources": {
     "contours": {
       "type": "vector",
+      "attribution": "<a href=\"https://github.com/feludwig/pgsql-omt-schema/demo\">&copy; stylesheet: @feludwig</a> <a href=\"https://www2.jpl.nasa.gov/srtm/\">&copy; SRTM data from USGS, NASA</a>",
       "tiles":[ 
         "https://feludwig.github.io/pgsql-omt-schema/demo/tiles/contours/{z}/{x}/{y}.pbf"
       ],

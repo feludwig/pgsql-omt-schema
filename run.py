@@ -449,6 +449,8 @@ def print_stats(c:psycopg2.extensions.cursor) :
     print_table(data,cols)
 
 def print_table(data,headers) :
+    if len(data)==0 :
+        return
     maxwidths=[len(c) for c in headers]
     last_ix=len(maxwidths)-1
     for line in data :

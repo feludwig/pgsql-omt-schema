@@ -63,10 +63,12 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
 
 
 class Writer(threading.Thread) :
-    def __init__(self,c) :
+    def __init__(self,c,func_name:str) :
         threading.Thread.__init__(self)
         self.c=c
         self.finished=False
+        self.func_name=func_name
+        self.function_returns_stats=func_name.find('stats')>=0
         self.todo=queue.Queue(maxsize=0) #infinite size
     def set_zooms(self,zs) :
         self.total_written={z:0 for z in zs}
@@ -128,10 +130,10 @@ class Writer(threading.Thread) :
 
     def process(self,z,x,y) :
         success=False
+        q=f'SELECT * FROM {self.func_name}(%s,%s,%s);'
         for i in range(5) : #try again 5 times
             try :
-                self.c.execute(
-                    self.c.mogrify('SELECT * FROM omt_all_with_stats(%s,%s,%s);',(z,x,y)))
+                self.c.execute(self.c.mogrify(q,(z,x,y)))
                 success=True
                 break
             # when function was redefined while running/did not exist when needed
@@ -144,11 +146,16 @@ class Writer(threading.Thread) :
                 print(f'{z:2}/{x}/{y}.{format}\t','retried 5 times, abandoning')
             return
         result=[dict(zip([col.name for col in self.c.description],i)) for i in self.c.fetchall()]
-        for line in result :
-            if line['name']=='ALL' :
-                out_data=line['data']
-            else :
-                self.add_layer_stats_line(z,line)
+
+        if self.function_returns_stats :
+            for line in result :
+                if line['name']=='ALL' :
+                    out_data=line['data']
+                else :
+                    self.add_layer_stats_line(z,line)
+        else :
+            out_data=list(result[0].values())[0]
+
         if not os.path.exists(f'{outdir}/{z}/{x}') :
             os.makedirs(f'{outdir}/{z}/{x}',exist_ok=True)
         with open(f'{outdir}/{z}/{x}/{y}.{format}','wb') as f:
@@ -157,7 +164,6 @@ class Writer(threading.Thread) :
         self.total_count[z]+=1
         with printer_lock :
             print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes')
-
 
 dbaccess,mode,outdir,*more=sys.argv[1:]
 if mode=='--range' :
@@ -170,8 +176,12 @@ else :
     exit(1)
 
 
+func_name='omt_all_with_stats'
+if '--contours' in more :
+    func_name='contours_vector'
 
-ts=[Writer(make_new_connection_cursor()) for i in range(5)]
+
+ts=[Writer(make_new_connection_cursor(),func_name) for i in range(5)]
 
 start=time.time()
 

@@ -1,5 +1,16 @@
 #!/usr/bin/python3
 
+#  (c) This file is part of pgsql-omt-schema
+#  see https://github.com/feludwig/pgsql-omt-schema for details
+#  Author https://github.com/feludwig
+#
+#   LICENSE https://github.com/feludwig/pgsql-omt-schema/blob/main/LICENSE
+#   GPL v3 in short :
+#     Permissions of this strong copyleft license are conditioned on making available
+#     complete source code of licensed works and modifications, which include larger
+#     works using a licensed work, under the same license.
+#     Copyright and license notices must be preserved.
+
 import sys
 import psycopg2
 import os

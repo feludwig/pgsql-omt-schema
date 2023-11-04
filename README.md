@@ -19,13 +19,13 @@ client browser.
 with all these [attributions](demo)
 
 
-A little selection of omt-schema compatible styles
-* [OSM](https://github.com/openmaptiles/openmaptiles/tree/master/style) an adaptation
+#### A little selection of omt-schema compatible styles
+* featured in demo [OSM](https://github.com/openmaptiles/openmaptiles/tree/master/style) an adaptation
 of the raster [OSM Carto](https://github.com/gravitystorm/openstreetmap-carto) from the
 homepage of [openstreetmap](https://www.openstreetmap.org).
-* [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
+* featured in demo [OSM Bright](https://github.com/openmaptiles/osm-bright-gl-style)
 * [Positron](https://github.com/openmaptiles/positron-gl-style)
-* [MapTiler Basic](https://github.com/openmaptiles/maptiler-basic-gl-style)
+* featured in demo [MapTiler Basic](https://github.com/openmaptiles/maptiler-basic-gl-style)
 
 #### Vector tile advantages over raster tiles
 

@@ -13,10 +13,6 @@
       ],
       "maxzoom":15,
       "overzoom":1
-    },
-    "attribution": {
-      "attribution": "<a href=\"https://www.openmaptiles.org/\" target=\"_blank\">&copy; OpenMapTiles</a> <a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\">&copy; OpenStreetMap contributors</a>",
-      "type": "vector"
     }
   },
   "sprite":"https://feludwig.github.io/pgsql-omt-schema/demo/sprites/openstreetmap-vector/sprite",
@@ -9565,7 +9561,7 @@
       ]
     },
     {
-      "id": "poi_waste",
+      "id": "poi_recycling",
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "poi",
@@ -9586,7 +9582,6 @@
             ]
           ]
         },
-        "symbol-sort-key": ["match",["get","class"],"drinking_water",2,"waste_basket",1,3],
         "icon-image": "{subclass}",
         "text-field": ["step",["zoom"],"",16,["concat",["get","name:latin"],"\n",["get","name:nonlatin"]]],
         "visibility": "visible",
@@ -9615,7 +9610,60 @@
         [
           "in",
           "class",
-          "recycling",
+          "recycling"
+        ]
+      ]
+    },
+    {
+      "id": "poi_waste",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "poi",
+      "minzoom": 16,
+      "layout": {
+        "text-font": [
+          "Noto Sans Bold"
+        ],
+        "text-size": {
+          "stops": [
+            [
+              14,
+              10
+            ],
+            [
+              20,
+              11
+            ]
+          ]
+        },
+        "icon-image": "{subclass}",
+        "text-field": "{name:latin}\n{name:nonlatin}",
+        "visibility": "visible",
+        "text-anchor": "top",
+        "text-offset": [
+          0,
+          0.8
+        ],
+        "text-padding": 2,
+        "text-max-width": 9,
+        "icon-allow-overlap": false
+      },
+      "paint": {
+        "text-color": "#734a08",
+        "icon-opacity": 1,
+        "icon-halo-blur": 1,
+        "text-halo-blur": 0.5,
+        "icon-halo-color": "rgba(255, 255, 255, 1)",
+        "icon-halo-width": 0.5,
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1
+      },
+      "metadata": {},
+      "filter": [
+        "all",
+        [
+          "in",
+          "class",
           "waste_basket",
           "drinking_water",
           "toilets"

@@ -9442,6 +9442,7 @@
           ]
         },
         "icon-image": ["step",["zoom"],"purple_dot",17,["get","subclass"]],
+        "icon-size": ["step",["zoom"],0.6,15,0.7,16,1],
         "text-field": ["step",["zoom"],"",17,["concat",["get","name:latin"],"\n",["get","name:nonlatin"]]],
         "visibility": "visible",
         "text-anchor": "top",
@@ -9520,6 +9521,7 @@
           ]
         },
         "icon-image": ["step",["zoom"],"purple_dot",15,["get","subclass"]],
+        "icon-size": ["step",["zoom"],0.7,16,1],
         "text-field": ["step",["zoom"],"",16,["concat",["get","name:latin"],"\n",["get","name:nonlatin"]]],
         "visibility": "visible",
         "text-anchor": "top",
@@ -10093,6 +10095,7 @@
           ]
         },
         "icon-image": ["step",["zoom"],"orange_dot",16,["get","subclass"]],
+        "icon-size": ["step",["zoom"],0.6,15,0.7,16,1],
         "text-field": ["step",["zoom"],"",16,["concat",["get","name:latin"],"\n",["get","name:nonlatin"]]],
         "visibility": "visible",
         "text-anchor": "top",

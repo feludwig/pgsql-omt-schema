@@ -19,14 +19,12 @@ function enable_cycle_routes() {
   var layer_ids=[];
   fetch('demo/styles/cyclo-routes.json').then(r=>r.json()).then(function(c) {
     // no new sources, but add a stub for the copyright attribution
-    console.log(c.sources,c.sources[Object.keys(c.sources)[0]]);
     document.map.addSource("cycle-routes-stub",c.sources[Object.keys(c.sources)[0]]);
     c.layers.forEach(l=>{
       document.map.addLayer(l);
       layer_ids.push(l.id);
     });
   });
-  console.log(layer_ids);
   //enable cyclecheckbox
   var chb=document.querySelector('#cyclecheckbox');
   chb.disabled=false;

@@ -52,6 +52,10 @@ works, but involves generating sprites twice individually (for `@2x.png` and `.p
 <https://github.com/openmaptiles/osm-bright-gl-style>
 
 
+Basic starting style for omt-schema stylesheets, published by
+[OpenMapTiles](https://openmaptiles.org/styles/).
+
+
 Has a horrible rank out-of-specification behaviour: filter based on 15 < rank < 25 !?
 This then hides almost all pois on high zoom
 
@@ -59,9 +63,20 @@ This then hides almost all pois on high zoom
 
 <https://github.com/openmaptiles/maptiler-basic-gl-style>
 
+
+Basic starting style for omt-schema stylesheets, published by
+[OpenMapTiles](https://openmaptiles.org/styles/).
+
 ### cyclo-bright
 
 <https://github.com/leonardehrenfried/cyclo-bright-gl-style>
+
+
+An addition to the [osm-bright](#osm-bright) stylesheet
+
+### cyclo-routes
+
+A subset of the above [cyclo-bright](#cyclo-bright), mostly the additions. Used as an overlay
 
 ### contours
 

@@ -36,7 +36,7 @@
       position: absolute;
       top: 3vw;
       left: 3vw;
-      padding: 1vw 3vw;
+      padding: 1vw 1.5vw;
       margin: 0;
     }
   </style>
@@ -51,9 +51,13 @@
     </svg>
     <a href="https://github.com/feludwig/pgsql-omt-schema">source code and guides</a></p>
     <p><input disabled type="checkbox" id="contourscheckbox"> Show contour lines</p>
+    <p><input disabled type="checkbox" id="cyclecheckbox"> Show cycle routes</p>
     <p><input disabled type="checkbox" id="tileboundscheckbox"> Show tile bounds</p>
     <p><select type="options" id="styleselector">
-    </select></p>
+      </select></p>
+    <button onclick="add_relief();">Add relief</button>
+    <button onclick="add_lhc_test();">Add <abbr title="Large Hadron Collider">LHC</abbr></button>
+    Go to <a href="#10.78/46.2741/6.055">LHC</a>
   </div>
 
   <div id="map"></div>

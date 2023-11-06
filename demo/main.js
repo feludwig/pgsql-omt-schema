@@ -15,6 +15,34 @@ function popup_text(f) {
   return Object.keys(p).map(k=>k+'='+p[k]).join('<br>');
 }
 
+function enable_cycle_routes() {
+  var layer_ids=[];
+  fetch('demo/styles/cyclo-routes.json').then(r=>r.json()).then(function(c) {
+    // no new sources, but add a stub for the copyright attribution
+    console.log(c.sources,c.sources[Object.keys(c.sources)[0]]);
+    document.map.addSource("cycle-routes-stub",c.sources[Object.keys(c.sources)[0]]);
+    c.layers.forEach(l=>{
+      document.map.addLayer(l);
+      layer_ids.push(l.id);
+    });
+  });
+  console.log(layer_ids);
+  //enable cyclecheckbox
+  var chb=document.querySelector('#cyclecheckbox');
+  chb.disabled=false;
+  chb.checked=true;
+  chb.onchange=function (e) {
+    console.log(e);
+    var setVis='none';
+    if (chb.checked) {
+        setVis='visible';
+    }
+    layer_ids.forEach(function(cl) {
+      document.map.setLayoutProperty(cl,'visibility',setVis);
+    });
+  };
+}
+
 function enable_contours() {
   // append contours to current map
   fetch('demo/styles/contours.json').then(r=>r.json()).then(function(c) {
@@ -47,6 +75,28 @@ function enable_tilebounds_checkbox() {
     document.map.showTileBoundaries=tbc.checked;
   };
 }
+
+function add_lhc_test() {
+  layer_name='lhc_test';
+  fetch('demo/lhc.geojson').then(r=>r.json()).then(g=>{
+    console.log(g);
+    document.map.addSource(layer_name,{
+      type:'geojson',
+      data:g,
+    });
+    document.map.addLayer({
+      id: layer_name+'_line_layer',
+      type: 'line',
+      filter: [ '==', '$type', 'LineString' ],
+      source: layer_name,
+      paint: {
+        'line-color':'#ff00ff'
+      }
+    });
+    document.map.setLayoutProperty(layer_name+'_line_layer','visibility','visible');
+  });
+}
+
 
 function add_geojson_playground() {
   // can be re-added without wiping data
@@ -206,16 +256,19 @@ function add_relief() {
       "tileSize": 256,
       "encoding": "terrarium"
   });
-  document.map.addLayer({
-    "id": "terrain-rgb",
-    "source": "terrarium",
-    "type": "hillshade",
-    "paint": {
-      "hillshade-shadow-color": "hsl(39, 21%, 33%)",
-      "hillshade-illumination-direction": 315,
-      "hillshade-exaggeration": 0.8
-    }
-  });
+  if (false) { // too much
+    document.map.addLayer({
+      "id": "terrain-rgb-hillshade",
+      "source": "terrarium",
+      "type": "hillshade",
+      "paint": {
+        "hillshade-shadow-color": "hsl(39, 21%, 33%)",
+        "hillshade-illumination-direction": 315,
+        "hillshade-exaggeration": 0.8
+      }
+    });
+  }
+  document.map.setTerrain({source:"terrarium",exaggeration:3});
 }
 
 function enable_style_selector() {
@@ -240,6 +293,7 @@ function switch_style_over(tgt_index) {
     if (document.map.getSource('contours')==null) {
       enable_contours();
     }
+    enable_cycle_routes();
     if (document.map.getSource('playground')==null) {
       add_geojson_playground();
     }
@@ -278,6 +332,7 @@ function main() {
     set_name_property();
     document.querySelector('p#loading').remove();
     enable_contours();
+    enable_cycle_routes();
     enable_tilebounds_checkbox();
     enable_style_selector();
 

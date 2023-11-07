@@ -48,6 +48,7 @@
 --    -> transportation_name st_tilenmerge don't care aboud directions of lines
 --    -> same ides: minimum tolerance for st_collectoverlapping ? to join the
 --        two lanes of motorways into one at z<10
+--  * transportation FROM planet_osm_point (and transportation_name)-> put into pre_agg_
 --  * poi sophisticated filtering PARTITION BY class,
 --    eg: among all hospitals, take only the 5 biggest
 --  * landcover: ST_SimplifyPreserveTopology works well, find the correct exponential factor

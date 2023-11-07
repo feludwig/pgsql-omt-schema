@@ -21,7 +21,12 @@ function enable_cycle_routes() {
     // no new sources, but add a stub for the copyright attribution
     document.map.addSource("cycle-routes-stub",c.sources[Object.keys(c.sources)[0]]);
     c.layers.forEach(l=>{
-      document.map.addLayer(l);
+			if (l.id.includes('background')) {                                                         
+        // add background layers UNDER tunnel_service_track_casing                               
+        document.map.addLayer(l,'tunnel_service_track_casing');                                  
+      } else {                                                                                   
+        document.map.addLayer(l);                                                                
+      }
       layer_ids.push(l.id);
     });
   });

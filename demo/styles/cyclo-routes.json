@@ -33,10 +33,7 @@
       "paint": {
         "line-color": "#88fc92",
         "line-opacity": 0.5,
-        "line-width": {
-          "base": 1.2,
-          "stops": [[7, 1.5], [20, 29]]
-        }
+        "line-width": ["interpolate",["exponential",1.2],["zoom"],7,3,20,58]
       }
     },
     {
@@ -58,10 +55,7 @@
       "paint": {
         "line-color": "#444dfc",
         "line-opacity": 0.5,
-        "line-width": {
-          "base": 1.2,
-          "stops": [[7, 1.5], [20, 29]]
-        }
+        "line-width": ["interpolate",["exponential",1.2],["zoom"],7,3,20,58]
       }
     },
     {

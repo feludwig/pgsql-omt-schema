@@ -106,6 +106,15 @@ can take a long time to generate.
 
 # Usage
 
+### Load lake-centerline data
+
+Static data [lake_centerline.geojson](lake_centerline.geojson) is from
+<https://github.com/lukasmartinelli/osm-lakelines>
+
+```
+python3 run.py 'dbname=gis port=5432' --lake
+```
+
 ### Create the SQL functions
 
 ```

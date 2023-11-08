@@ -1121,7 +1121,8 @@ LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_waterway(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
-SELECT name,class,brunnel,intermittent,
+SELECT name,class,
+  (CASE WHEN z<=10 THEN NULL ELSE brunnel END) AS brunnel,intermittent,
   ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS way
 FROM (
   SELECT name,{{line.waterway_v}} AS class,
@@ -1141,7 +1142,7 @@ WHERE
     OR (z<13 AND z>=12 AND class IN ('river','canal'))
     OR (z<12 AND z>=11 AND class IN ('river'))
     OR (z<11 AND name IS NOT NULL)
-GROUP BY(name,class,brunnel,intermittent);
+GROUP BY(name,class,CASE WHEN z<=10 THEN NULL ELSE brunnel END,intermittent);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

@@ -57,6 +57,8 @@
 --  * water by-zoom FILTERING!
 --  * FORALL layers: osm_id aggregation: somehow only take some ids?
 --    -> string_agg(DISTINCT osm_id ORDER BY way_area DESC LIMIT 5,',')
+--  * think about natural earth data: for now it works without... but
+--    lowzooms are horribly unusable
 
 -- zoom filtering:
 --  water features filter out by area
@@ -83,6 +85,8 @@ DROP TYPE IF EXISTS {{omt_typ_pref}}_poi CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_waterway CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_transportation CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_transportation_name CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_water CASCADE;
+DROP TYPE IF EXISTS {{omt_typ_pref}}_water_name CASCADE;
 
 -- united types to make {layer} and {layer}_name
 DROP TYPE IF EXISTS {{omt_typ_pref}}_transportation_merged CASCADE;
@@ -260,11 +264,27 @@ CREATE TYPE {{omt_typ_pref}}_poi AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_water_merged AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   name text,
-  id bigint,
   class text,
   intermittent integer,
-  brunnel text, --TODO: only two-possibility, NOT ford
+  brunnel text,
+  way geometry -- exceptionally, return the full geometry way, NOT the not yet truncated ST_AsMVTGeom()
+);
+
+CREATE TYPE {{omt_typ_pref}}_water AS (
+{% if with_osm_id %} osm_id text, {% endif %}
+  class text,
+  intermittent integer,
+  brunnel text,
+  geom geometry
+);
+
+CREATE TYPE {{omt_typ_pref}}_water_name AS (
+{% if with_osm_id %} osm_id text, {% endif %}
+  name text,
+  class text,
+  intermittent integer,
   geom geometry
 );
 
@@ -339,6 +359,34 @@ SELECT CASE class
 END;
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_lakeline(way geometry,
+    test_id bigint,test_typ char(1)) RETURNS geometry
+AS $$
+-- INPUT: way a polygon of a lake, or river
+-- OUTPUT: a lakeline, to use for placong text on the polygon.
+--WITH a(a) AS (
+--    SELECT ST_Dump(ST_ApproximateMedialAxis(way))),
+--  b(sum,geom) AS (
+--    SELECT SUM(ST_Intersects((a1.a).geom,(a2.a).geom)::int),(a1.a).geom
+--    FROM a AS a1, a AS a2 WHERE (a1.a).path[1]>(a2.a).path[1]
+--    GROUP BY a1.a),
+--  c(geom) AS (
+--    SELECT ST_LineMerge(unnest(ST_ClusterIntersecting(geom)))
+--    FROM b WHERE sum>1)
+--SELECT ST_MakeLine(geom) FROM c;
+BEGIN
+IF (SELECT count(*) FROM lake_centerline WHERE osm_id=-test_id)!=0 AND test_typ='r' THEN
+  RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=-test_id);
+ELSE IF (SELECT count(*) FROM lake_centerline WHERE osm_id=test_id)!=0 AND test_typ='w' THEN
+  RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=test_id);
+ELSE
+  RETURN (SELECT ST_LongestLine(way,way));
+END IF;
+END IF;
+END
+$$
+LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 
 
 
@@ -752,7 +800,7 @@ AS $$
 SELECT housenumber,
   ST_AsMVTGeom((CASE
       WHEN tablefrom = 'point' THEN way
-      ELSE ST_Centroid(way) END),bounds_geom) AS geom
+      ELSE ST_PointOnSurface(way) END),bounds_geom) AS geom
 FROM (
   SELECT {{line.housenumber}},{{line.way}},'line' AS tablefrom FROM {{line.table_name}}
   UNION ALL
@@ -760,7 +808,7 @@ FROM (
   UNION ALL
   SELECT {{polygon.housenumber}},{{polygon.way}},'polygon' AS tablefrom FROM planet_osm_polygon)
     AS layer_housenumber
-  -- obviously don't scan on the ST_Centroid(way) because those are not indexed
+  -- obviously don't scan on the ST_PointOnSurface(way) because those are not indexed
 WHERE housenumber IS NOT NULL AND ST_Intersects(way,bounds_geom) AND z>=14;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1073,21 +1121,27 @@ LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_waterway(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
-SELECT name,waterway AS class,
-  (CASE
-    WHEN {{line.bridge_v}} IS NOT NULL AND {{line.bridge_v}}!='no' THEN 'bridge'
-    WHEN {{line.tunnel_v}} IS NOT NULL AND {{line.tunnel_v}}!='no' THEN 'tunnel'
-    WHEN {{line.ford_v}} IS NOT NULL AND {{line.ford_v}}!='no' THEN 'ford'
-  END) AS brunnel,
-  (CASE
-    WHEN {{line.intermittent_v}} IN ('yes') THEN 1
-    ELSE 0
-  END) AS intermittent,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM {{line.table_name}}
-WHERE {{line.waterway_v}} IN ('stream','river','canal','drain','ditch')
-  AND ST_Intersects({{line.way_v}},bounds_geom) AND z>=13;
-    --TODO: by-zoom specificities
+SELECT name,class,brunnel,intermittent,
+  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS way
+FROM (
+  SELECT name,{{line.waterway_v}} AS class,
+    (CASE
+      WHEN {{line.bridge_v}} IS NOT NULL AND {{line.bridge_v}}!='no' THEN 'bridge'
+      WHEN {{line.tunnel_v}} IS NOT NULL AND {{line.tunnel_v}}!='no' THEN 'tunnel'
+    END) AS brunnel,
+    (CASE
+      WHEN {{line.intermittent_v}} IN ('yes') THEN 1
+      ELSE 0
+    END) AS intermittent,{{line.way}}
+  FROM {{line.table_name}}
+  WHERE ST_Intersects({{line.way_v}},bounds_geom)
+    AND {{line.waterway_v}} IN ('stream','river','canal','drain','ditch')) AS foo
+WHERE
+    (z>=13)
+    OR (z<13 AND z>=12 AND class IN ('river','canal'))
+    OR (z<12 AND z>=11 AND class IN ('river'))
+    OR (z<11 AND name IS NOT NULL)
+GROUP BY(name,class,brunnel,intermittent);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1113,7 +1167,7 @@ FROM (
       --sqlglot does not like implicit a*b+c*d, instead (a*b)+(c*d)
       (capital_score*3e6)+(province_score*2e6)+coalesce(population,0)) AS score,
     (CASE WHEN tablefrom='point' THEN way
-      WHEN tablefrom='polygon' THEN ST_Centroid(way) END) AS way
+      WHEN tablefrom='polygon' THEN ST_PointOnSurface(way) END) AS way
   FROM (
     SELECT
 {% if with_osm_id %} {{polygon.osm_id}}, {% endif %}
@@ -1364,7 +1418,8 @@ FROM
     -- natural in quotes because it's also a numbertype: to not trip up postgres
     amenity,"natural",man_made,
     start_date_year,score,information,
-		ST_AsMVTGeom(way,bounds_geom) AS geom
+    ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
+      WHEN tablefrom='polygon' THEN ST_PointOnSurface(way) END),bounds_geom) AS geom
 	FROM (
     SELECT
 {% if with_osm_id %} 'n'||{{point.osm_id_v}} AS osm_id, {% endif %}
@@ -1463,7 +1518,7 @@ FROM
 		) AND ST_Intersects(way,bounds_geom)) AS without_rank_without_class
 ) AS without_rank
 WHERE (z>=14)
-  OR (z<14 AND z>=13 AND class IN ('hospital','railway','bus','attraction'))
+  OR (z<14 AND z>=13 AND class IN ('hospital','railway','bus','attraction','college'))
   OR (z<13 AND (class IN ('hospital','bus','attraction') OR (class='railway' AND subclass='station')));
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1492,13 +1547,17 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_agg_water_merged(bounds_geom geometry, z integer)
 RETURNS setof {{omt_typ_pref}}_water_merged
 AS $$
-SELECT {{polygon.name}},osm_id AS id, --TODO: move this to with_osm_id template arg ?
+SELECT
+{% if with_osm_id %}
+  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
+{% endif %}
+  {{polygon.name}},
   (CASE
-    WHEN {{polygon.water_v}} IN ('river') THEN 'river'
+    WHEN {{polygon.water_v}} IN ('river','lake','ocean') THEN {{polygon.water_v}}
     WHEN {{polygon.waterway_v}} IN ('dock') THEN 'dock'
     WHEN {{polygon.leisure_v}} IN ('swimming_pool') THEN 'swimming_pool'
     ELSE 'lake'
@@ -1510,16 +1569,57 @@ SELECT {{polygon.name}},osm_id AS id, --TODO: move this to with_osm_id template 
   (CASE
     WHEN {{polygon.bridge_v}} IS NOT NULL AND {{polygon.bridge_v}}!='no' THEN 'bridge'
     WHEN {{polygon.tunnel_v}} IS NOT NULL AND {{polygon.tunnel_v}}!='no' THEN 'tunnel'
-    WHEN {{polygon.ford_v}} IS NOT NULL AND {{polygon.ford_v}}!='no' THEN 'ford'
   END) AS brunnel,
-  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+  {{polygon.way}}
 FROM {{polygon.table_name}}
 WHERE ({{polygon.covered_v}} IS NULL OR {{polygon.covered_v}} != 'yes') AND (
-    {{polygon.water_v}} IN ('river') OR {{polygon.waterway_v}} IN ('dock')
+    {{polygon.water_v}} IN ('river','lake') OR {{polygon.waterway_v}} IN ('dock')
     OR {{polygon.natural_v}} IN ('water','bay','spring') OR {{polygon.leisure_v}} IN ('swimming_pool')
     OR {{polygon.landuse_v}} IN ('reservoir','basin','salt_pond'))
-  AND ST_Intersects({{polygon.way_v}},bounds_geom);
-    --TODO: by-zoom specificities
+  AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
+    (z>=12 AND {{polygon.way_area_v}}>1500) OR
+    (z>=11 AND {{polygon.way_area_v}}>6000) OR
+    (z>=10 AND {{polygon.way_area_v}}>24e3) OR
+    (z>=09 AND {{polygon.way_area_v}}>96e3) OR
+    (z>=08 AND {{polygon.way_area_v}}>384e3) OR
+    (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
+    (z>=06 AND {{polygon.way_area_v}}>6e6) OR
+    (z>=05 AND {{polygon.way_area_v}}>24e6) OR
+    (z>=04 AND {{polygon.way_area_v}}>96e6)
+  );
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water_name(bounds_geom geometry, z integer)
+RETURNS setof {{omt_typ_pref}}_water_name
+AS $$
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  name,class,intermittent,
+  -- openmaptiles uses https://github.com/openmaptiles/osm-lakelines basically a docker wrapper,
+  -- of https://github.com/ungarj/label_centerlines/blob/master/label_centerlines/_src.py
+  --ST_AsMVTGeom(ST_PointOnSurface(way),bounds_geom) AS geom
+  -- this thing should be a line, reasonable approx of the osm-lakelines...
+  ST_AsMVTGeom(
+    {{omt_func_pref}}_get_lakeline(way,substr(osm_id,2)::bigint,substr(osm_id,1,1)),
+    bounds_geom) AS geom
+FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
+WHERE class IN ('ocean','lake','sea') AND name IS NOT NULL;
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry, z integer)
+RETURNS setof {{omt_typ_pref}}_water
+AS $$
+SELECT
+{% if with_osm_id %}
+    --LIMIT 5 but that's a syntax error in an aggregate
+    array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
+{% endif %}
+  class,intermittent,brunnel,
+  ST_UnaryUnion(unnest(ST_ClusterIntersecting(ST_AsMVTGeom(way,bounds_geom)))) AS geom
+FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
+GROUP BY (class,intermittent,brunnel);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1529,10 +1629,10 @@ AS $$
 -- ST_TileEnvelope will be cached:
 -- SELECT pg_get_functiondef('st_tileenvelope'::regproc) ~ 'IMMUTABLE';
 WITH
-  premvt_aerodrome_label AS(
+  premvt_aerodrome_label AS (
     SELECT {{additional_name_columns}} *
     FROM {{omt_func_pref}}_aerodrome_label(ST_TileEnvelope(z,x,y))),
-  premvt_aeroway AS(
+  premvt_aeroway AS (
     SELECT * FROM {{omt_func_pref}}_aeroway(ST_TileEnvelope(z,x,y))),
   premvt_boundary AS (
     SELECT * FROM {{omt_func_pref}}_boundary(ST_TileEnvelope(z,x,y),z)),
@@ -1562,8 +1662,6 @@ WITH
     SELECT {{additional_name_columns}} *
     FROM {{omt_func_pref}}_waterway(ST_TileEnvelope(z,x,y),z)),
   -- the generated {layer} and {layer}_name:
-  premvt_water AS (
-    SELECT * FROM {{omt_func_pref}}_water(ST_TileEnvelope(z,x,y))),
   premvt_transportation AS (
     SELECT * FROM {{omt_func_pref}}_transportation(ST_TileEnvelope(z,x,y),z)),
   premvt_transportation_name AS (
@@ -1575,19 +1673,11 @@ WITH
       network,class,subclass,brunnel,level,layer,indoor,
       geom
     FROM {{omt_func_pref}}_transportation_name(ST_TileEnvelope(z,x,y),z)),
-  premvt_water_noname AS (
-    SELECT
-      --TODO: thow away this id
-      id,class,intermittent,brunnel,geom
-    FROM premvt_water
-  ),
+  premvt_water AS (
+    SELECT * FROM {{omt_func_pref}}_water(ST_TileEnvelope(z,x,y),z)),
   premvt_water_name AS (
-    SELECT
-      name,{{additional_name_columns}}
-      -- TODO: WARN! different from water_noname
-      intermittent,geom
-    FROM premvt_water WHERE name IS NOT NULL
-  )
+    SELECT {{additional_name_columns}} *
+    FROM {{omt_func_pref}}_water_name(ST_TileEnvelope(z,x,y),z))
   SELECT ST_AsMVT(premvt_aerodrome_label,'aerodrome_label') AS mvt,
     'aerodrome_label' AS name,
     count(*) AS rowcount
@@ -1640,10 +1730,10 @@ WITH
     'transportation_name' AS name,
     count(*) AS rowcount
     FROM premvt_transportation_name UNION
-  SELECT ST_AsMVT(premvt_water_noname,'water') AS mvt,
+  SELECT ST_AsMVT(premvt_water,'water') AS mvt,
     'water' AS name,
     count(*) AS rowcount
-    FROM premvt_water_noname UNION
+    FROM premvt_water UNION
   SELECT ST_AsMVT(premvt_water_name,'water_name') AS mvt,
     'water_name' AS name,
     count(*) AS rowcount

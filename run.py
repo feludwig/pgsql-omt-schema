@@ -500,6 +500,7 @@ TEMPLATE_VARS={
     'omt_view_pref':'public.planet_osm',
     # DOES NOT use the omt_func_pref
     'omt_all_func':'public.omt_all',
+    'lake_table_name':'lake_centerline',
 }
 
 if __name__=='__main__' :
@@ -535,6 +536,16 @@ if __name__=='__main__' :
     elif len(sys.argv)>2 and sys.argv[2]=='--index-names' :
         for n in run_sql_indexes(c,sql_functions_script,tmpl_defined,'names') :
             print(n)
+    elif len(sys.argv)>2 and sys.argv[2] in ('--lakes','--lake') :
+        with open(os.path.dirname(__file__)+'/lake_centerline.geojson','r') as f :
+            input_json=f.read()
+        e.globals={'input_json':input_json,**TEMPLATE_VARS}
+        sql_script=render_template_file('load_lake_centerline.sql')
+        run_sql_script(c,sql_script)
+        cols=[col.name for col in c.description]
+        data=c.fetchone()
+        print(dict(zip(cols,data)))
+        c.execute('COMMIT;')
     else :
         run_sql_script(c,sql_views_script)
         run_sql_script(c,sql_functions_script)

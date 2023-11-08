@@ -145,19 +145,20 @@ On bigger databases it may take a long time
 to run (up to 1h30-2h per piece on a planet database;
 there are around 25 of them, so up to 50h)
 
-* If you want to read them through before:
-* ```python3 run.py 'dbname=gis port=5432' --index-print```
+If you want to read them through before:
+```python3 run.py 'dbname=gis port=5432' --index-print```
 
 ```
 python3 run.py 'dbname=gis port=5432' --index
 ```
 
-__Note__: The index creation will block all writes to the currently indexing table.
+_Note_ : The index creation will block all writes to the currently indexing table.
 Change `CREATE INDEX` to `CREATE INDEX CONCURRENTLY` if you wish to still write while
 indexing. This has the tradeoff of being much slower (up to 3h per piece on a planet db)
 
 
-__Note__: You can run
+_Note_ : In another shell, run
+
 ```
 while sleep 1;do data="$(psql -d gis -p 5432 -c "select
   round((100*blocks_done)::numeric/nullif(blocks_total,0),2)::text||'%' as progress,
@@ -167,6 +168,7 @@ while sleep 1;do data="$(psql -d gis -p 5432 -c "select
 from pg_stat_progress_create_index" --csv|tail -n1)";
 printf '\033[2K\r%s' "${data}";done
 ```
+
 for a live index creation progress report.
 
 ### Add tile url

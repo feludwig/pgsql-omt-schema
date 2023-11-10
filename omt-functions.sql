@@ -396,8 +396,9 @@ RETURNS setof {{omt_typ_pref}}_landuse
 AS $$
 SELECT
 {% if with_osm_id %}
-  string_agg(CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
-    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END,',') AS osm_id,
+  array_to_string((array_agg(DISTINCT CASE
+    WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END))[1:5],',') AS osm_id,
 {% endif %}
   (CASE
     WHEN {{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
@@ -524,12 +525,12 @@ SELECT
     WHEN z>=12 THEN way
     WHEN z=11 THEN ST_SimplifyPreserveTopology(way,25)
     WHEN z=10 THEN ST_SimplifyPreserveTopology(way,100)
-    WHEN z=09 THEN ST_SimplifyPreserveTopology(way,300)
-    WHEN z=08 THEN ST_SimplifyPreserveTopology(way,1000)
-    WHEN z=07 THEN ST_SimplifyPreserveTopology(way,1800)
-    WHEN z=06 THEN ST_SimplifyPreserveTopology(way,3e3)
-    WHEN z=05 THEN ST_SimplifyPreserveTopology(way,5.8e3)
-    WHEN z=04 THEN ST_SimplifyPreserveTopology(way,9e3)
+    WHEN z=09 THEN ST_SimplifyPreserveTopology(way,200)
+    WHEN z=08 THEN ST_SimplifyPreserveTopology(way,400)
+    WHEN z=07 THEN ST_SimplifyPreserveTopology(way,800)
+    WHEN z=06 THEN ST_SimplifyPreserveTopology(way,1600)
+    WHEN z=05 THEN ST_SimplifyPreserveTopology(way,3e3)
+    WHEN z=04 THEN ST_SimplifyPreserveTopology(way,6e3)
     ELSE ST_SimplifyPreserveTopology(way,11e3)
     END,bounds_geom) AS geom
 FROM (SELECT
@@ -684,11 +685,13 @@ SELECT
 FROM {{line.table_name}}
 WHERE ({{line.boundary_v}} IN ('administrative','disputed')
     OR (z<=4 AND ({{line.boundary_v}} IN ('maritime')
-      AND {{line.admin_level_v}} IN ('1','2'))))
-   AND (z>=11 OR {{line.admin_level_v}} IN ('1','2','3','4','5','6','7'))
-   AND (z>=8 OR {{line.admin_level_v}} IN ('1','2','3','4'))
-   AND (z>=2 OR {{line.admin_level_v}} IN ('1','2','3'))
-   AND ST_Intersects({{line.way_v}},bounds_geom);
+      AND {{line.admin_level_v}} IN ('1','2')))) AND (
+    (z>=11)
+    --OR (z<11 AND {{line.admin_level_v}} IN ('1','2','3','4','5','6','7'))
+    OR (z<11 AND z>= 8 AND {{line.admin_level_v}} IN ('1','2','3','4','5','6'))
+    OR (z< 8 AND z>= 4 AND {{line.admin_level_v}} IN ('1','2','3','4'))
+    OR (z< 4 AND {{line.admin_level_v}} IN ('1','2'))
+  ) AND ST_Intersects({{line.way_v}},bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -701,6 +704,7 @@ WITH pre_country AS (
 {% if with_osm_id %} osm_id, {% endif %}
     admin_level,disputed,disputed_name,claimed_by,maritime,geom
   FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
+  ORDER BY admin_level DESC
 --    -- this algorithm tries to find out the country name on the left and right sides
 --    -- of the boundary.
 --    -- TODO: slow performance, create a MATERIALIZED VIEW for the just-country ones ?
@@ -777,7 +781,10 @@ WITH pre_country AS (
 --  GROUP BY(pre_country.osm_id,deduced.side,pre_country.admin_level,pre_country.geom)
   )
 SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if with_osm_id %}
+    --array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
+  osm_id,
+{% endif %}
   admin_level,
 --  (CASE WHEN admin_level<=2
 --    THEN (SELECT name FROM namesides WHERE side='left' AND pre_country.geom=geom LIMIT 1)
@@ -789,6 +796,7 @@ SELECT
 --  END) AS adm0_r,
   NULL AS adm0_l,NULL AS adm0_r,
   disputed,disputed_name,claimed_by,maritime,
+  --ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom) AS geom
   ST_AsMVTGeom(geom,bounds_geom) AS geom
 FROM pre_country;
 $$
@@ -1123,7 +1131,7 @@ RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
 SELECT name,class,
   (CASE WHEN z<=10 THEN NULL ELSE brunnel END) AS brunnel,intermittent,
-  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS way
+  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
 FROM (
   SELECT name,{{line.waterway_v}} AS class,
     (CASE
@@ -1141,7 +1149,7 @@ WHERE
     (z>=13)
     OR (z<13 AND z>=12 AND class IN ('river','canal'))
     OR (z<12 AND z>=11 AND class IN ('river'))
-    OR (z<11 AND name IS NOT NULL)
+    OR (z<11 AND name IS NOT NULL AND class IN ('river'))
 GROUP BY(name,class,CASE WHEN z<=10 THEN NULL ELSE brunnel END,intermittent);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1764,6 +1772,15 @@ SELECT tot.data AS data,100.0 AS pcent,tot.l AS bytes,
   'ALL' AS name,-1 AS rowcount
 FROM tot
 ORDER BY(bytes) DESC;
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+
+CREATE OR REPLACE FUNCTION {{omt_all_func}}_single_layer(z integer, x integer, y integer,
+  filter_name text)
+RETURNS bytea
+AS $$
+SELECT f.mvt FROM {{omt_func_pref}}_collect_all(z,x,y) AS f WHERE f.name=filter_name LIMIT 1;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

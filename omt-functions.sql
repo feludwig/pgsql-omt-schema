@@ -964,7 +964,8 @@ FROM (
 WHERE (
      (z>=12) -- take everything
   OR (z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
-  OR (z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','transit','aerialway'))
+  OR (z>=10 AND substring(class,'([a-z]+)') IN ('transit'))
+  OR (z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','aerialway'))
   OR (z>=07 AND substring(class,'([a-z]+)') IN ('primary','ferry','rail'))
   OR (z>=04 AND substring(class,'([a-z]+)') IN ('motorway','trunk'))
     --extension
@@ -1633,7 +1634,7 @@ SELECT
     array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
   class,intermittent,brunnel,
-  ST_UnaryUnion(unnest(ST_ClusterIntersecting(ST_AsMVTGeom(way,bounds_geom)))) AS geom
+  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
 FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
 GROUP BY (class,intermittent,brunnel);
 $$

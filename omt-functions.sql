@@ -535,8 +535,9 @@ SELECT
     END,bounds_geom) AS geom
 FROM (SELECT
 {% if with_osm_id %}
-  string_agg(CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
-    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END,',') AS osm_id,
+  array_to_string((array_agg(DISTINCT CASE
+    WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END))[1:5],',') AS osm_id,
 {% endif %}
     ( CASE
       WHEN {{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',

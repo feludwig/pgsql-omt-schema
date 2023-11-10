@@ -16,6 +16,7 @@
 -- other syntax: {{ omt_func_pref }}
 --    where omt_func_pref is a text variable
 
+-- IMPORTANT: raster z11==vector z10, rz11=z10 in short. rz04=z03, rz05=z04
 -- WARNING: only one curly brace pair used in this explanation to not confuse templating engine, use 2 pairs
 -- VARIABLES available :
 --  {point} the table storing all point features, default osm2pgsql name planet_osm_point
@@ -234,6 +235,7 @@ CREATE TYPE {{omt_typ_pref}}_mountain_peak AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_park AS (
+{% if with_osm_id %} osm_id text, {% endif %}
   name text,
   class text,
   rank integer,
@@ -378,11 +380,10 @@ AS $$
 BEGIN
 IF (SELECT count(*) FROM lake_centerline WHERE osm_id=-test_id)!=0 AND test_typ='r' THEN
   RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=-test_id);
-ELSE IF (SELECT count(*) FROM lake_centerline WHERE osm_id=test_id)!=0 AND test_typ='w' THEN
+ELSIF (SELECT count(*) FROM lake_centerline WHERE osm_id=test_id)!=0 AND test_typ='w' THEN
   RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=test_id);
 ELSE
   RETURN (SELECT ST_LongestLine(way,way));
-END IF;
 END IF;
 END
 $$
@@ -421,21 +422,19 @@ WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','reside
       'library','hospital','grave_yard') OR {{polygon.waterway_v}} IN ('dam')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
     (z>=12 AND {{polygon.way_area_v}}>1500) OR
-    (z>=11 AND {{polygon.way_area_v}}>6000) OR
-    (z>=10 AND {{polygon.way_area_v}}>24e3) OR
-    (z>=09 AND {{polygon.way_area_v}}>96e3) OR
-    (z>=08 AND {{polygon.way_area_v}}>384e3) OR
-    (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
-    (z>=06 AND {{polygon.way_area_v}}>6e6) OR
-    (z>=05 AND {{polygon.way_area_v}}>24e6) OR
-    (z>=04 AND {{polygon.way_area_v}}>96e6)
+    (z=11 AND {{polygon.way_area_v}}>6000) OR
+    (z=10 AND {{polygon.way_area_v}}>24e3) OR
+    (z=09 AND {{polygon.way_area_v}}>96e3) OR
+    (z=08 AND {{polygon.way_area_v}}>384e3) OR
+    (z=07 AND {{polygon.way_area_v}}>1536e3) OR
+    (z=06 AND {{polygon.way_area_v}}>6e6) -- empty at lower zooms
   )
 GROUP BY(class);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aerodrome_label(bounds_geom geometry)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aerodrome_label(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_aerodrome_label
 AS $$
 SELECT
@@ -463,11 +462,11 @@ FROM (
     {{polygon.iata}},{{polygon.icao}},{{polygon.ele}},{{polygon.way}}
   FROM {{polygon.table_name}}
 ) AS foo
-WHERE aeroway='aerodrome' AND ST_Intersects(way,bounds_geom);
+WHERE aeroway='aerodrome' AND ST_Intersects(way,bounds_geom) AND z>=08;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aeroway(bounds_geom geometry)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_aeroway(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_aeroway
 AS $$
 SELECT
@@ -499,7 +498,7 @@ FROM (
   FROM {{polygon.table_name}}
   WHERE {{polygon.aeroway_v}} IN ('aerodrome','heliport','runway','helipad','taxiway','apron')
     ) AS foo
-WHERE ST_Intersects(way,bounds_geom);
+WHERE ST_Intersects(way,bounds_geom) AND (z>=09);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -531,7 +530,7 @@ SELECT
     WHEN z=06 THEN ST_SimplifyPreserveTopology(way,1600)
     WHEN z=05 THEN ST_SimplifyPreserveTopology(way,3e3)
     WHEN z=04 THEN ST_SimplifyPreserveTopology(way,6e3)
-    ELSE ST_SimplifyPreserveTopology(way,11e3)
+    ELSE ST_SimplifyPreserveTopology(way,1/0) -- make error: should not happen!
     END,bounds_geom) AS geom
 FROM (SELECT
 {% if with_osm_id %}
@@ -566,7 +565,8 @@ FROM (SELECT
     (z>=08 AND {{polygon.way_area_v}}>2500e3) OR
     (z>=07 AND {{polygon.way_area_v}}>10e6) OR
     (z>=06 AND {{polygon.way_area_v}}>40e6) OR
-    (z>=05 AND {{polygon.way_area_v}}>160e6)
+    (z>=05 AND z<=04 AND {{polygon.way_area_v}}>160e6)
+    -- show nothing at lower zooms
   )
   GROUP BY(subclass)
 ) AS foo
@@ -600,19 +600,38 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_park(bounds_geom geometry)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_park(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_park
 AS $$
-SELECT name,
-  (CASE
-    WHEN boundary='aboriginal_lands' THEN boundary
-    ELSE COALESCE(replace(lower(NULLIF(tags->'protection_title','')),' ','_'),
-      NULLIF(boundary,''),NULLIF(leisure,''))
-  END) AS class, z_order AS rank,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM planet_osm_polygon
-WHERE (boundary IN ('national_park','protected_area') OR leisure='nature_reserve')
-   AND ST_Intersects(way,bounds_geom);
+SELECT
+{% if with_osm_id %}
+  array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
+{% endif %}
+  name,class,
+  (row_number() OVER (ORDER BY sum(way_area) DESC))::int AS rank,
+  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
+FROM (
+  SELECT
+  {% if with_osm_id %}
+    (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+      WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
+  {% endif %}
+    (CASE
+      WHEN z<=12 AND {{polygon.way_area_v}}<3e5 THEN NULL
+      ELSE {{polygon.name_v}}
+    END) AS name,
+    (CASE
+      WHEN {{polygon.boundary_v}}='aboriginal_lands' THEN {{polygon.boundary_v}}
+      ELSE COALESCE(replace(lower(NULLIF({{polygon.protection_title_v}},'')),' ','_'),
+        NULLIF({{polygon.boundary_v}},''),NULLIF({{polygon.leisure_v}},''))
+    END) AS class,
+    {{polygon.way}},{{polygon.way_area}}
+  FROM {{polygon.table_name}}
+  WHERE ({{polygon.boundary_v}} IN ('national_park','protected_area')
+      OR {{polygon.leisure_v}}='nature_reserve')
+    AND ST_Intersects({{polygon.way_v}},bounds_geom)) AS foo
+WHERE (z>=07)
+GROUP BY(class,name);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -690,8 +709,8 @@ WHERE ({{line.boundary_v}} IN ('administrative','disputed')
     (z>=11)
     --OR (z<11 AND {{line.admin_level_v}} IN ('1','2','3','4','5','6','7'))
     OR (z<11 AND z>= 8 AND {{line.admin_level_v}} IN ('1','2','3','4','5','6'))
-    OR (z< 8 AND z>= 4 AND {{line.admin_level_v}} IN ('1','2','3','4'))
-    OR (z< 4 AND {{line.admin_level_v}} IN ('1','2'))
+    OR (z< 8 AND z>= 3 AND {{line.admin_level_v}} IN ('1','2','3','4'))
+    OR (z< 3 AND {{line.admin_level_v}} IN ('1','2'))
   ) AND ST_Intersects({{line.way_v}},bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -705,7 +724,6 @@ WITH pre_country AS (
 {% if with_osm_id %} osm_id, {% endif %}
     admin_level,disputed,disputed_name,claimed_by,maritime,geom
   FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
-  ORDER BY admin_level DESC
 --    -- this algorithm tries to find out the country name on the left and right sides
 --    -- of the boundary.
 --    -- TODO: slow performance, create a MATERIALIZED VIEW for the just-country ones ?
@@ -783,8 +801,7 @@ WITH pre_country AS (
   )
 SELECT
 {% if with_osm_id %}
-    --array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
-  osm_id,
+  array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
   admin_level,
 --  (CASE WHEN admin_level<=2
@@ -797,9 +814,9 @@ SELECT
 --  END) AS adm0_r,
   NULL AS adm0_l,NULL AS adm0_r,
   disputed,disputed_name,claimed_by,maritime,
-  --ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom) AS geom
-  ST_AsMVTGeom(geom,bounds_geom) AS geom
-FROM pre_country;
+  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom) AS geom
+FROM pre_country
+GROUP BY(admin_level,disputed,disputed_name,claimed_by,maritime);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -959,10 +976,12 @@ WHERE (
      (z>=12) -- take everything
   OR (z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
   OR (z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','transit','aerialway'))
-  OR (z>=07 AND substring(class,'([a-z]+)') IN ('primary','trunk','ferry','rail'))
-  OR (z>=05 AND substring(class,'([a-z]+)') IN ('motorway'))
+  OR (z>=07 AND substring(class,'([a-z]+)') IN ('primary','ferry','rail'))
+  OR (z>=04 AND substring(class,'([a-z]+)') IN ('motorway','trunk'))
     --extension
-  OR (z>=05 AND class='bicycle_route' AND network='national')
+  OR (z>=04 AND class='bicycle_route' AND network='national')
+  OR (z>=11 AND class='bicycle_route' AND network='local')
+  OR (z>=10 AND class='bicycle_route' AND network='regional')
 );
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1102,7 +1121,10 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
-BEGIN IF (z<=10) THEN
+BEGIN
+IF (z<=07) THEN
+  RETURN; -- empty at low zoom levels
+ELSIF (z<=10) THEN
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_z_low_10(bounds_geom,z);
 ELSE
   RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_name_highz(bounds_geom,z);
@@ -1115,12 +1137,15 @@ LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
-BEGIN IF (z<=10) THEN
+BEGIN
+  IF (z<=04) THEN
+    RETURN; -- 0 rows, empty at lowest zoom levels
+  ELSIF (z<=10) THEN
       -- only osm_id if not in transportation_name
       --{% if with_osm_id %} (CASE WHEN name IS NULL AND ref IS NULL THEN osm_id END) AS osm_id, {% endif %}
-  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_10(bounds_geom,z);
-ELSE
-  RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_highz(bounds_geom,z);
+    RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_10(bounds_geom,z);
+  ELSE
+    RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_highz(bounds_geom,z);
 END IF;
 END
 $$
@@ -1529,7 +1554,10 @@ FROM
 ) AS without_rank
 WHERE (z>=14)
   OR (z<14 AND z>=13 AND class IN ('hospital','railway','bus','attraction','college'))
-  OR (z<13 AND (class IN ('hospital','bus','attraction') OR (class='railway' AND subclass='station')));
+  OR (z<13 AND z>=12 AND (class IN ('hospital','bus','attraction')
+        OR (class='railway' AND subclass='station')))
+  OR (z<12 AND z>=10 AND (class='railway' AND subclass='station'));
+  -- and zoom cutoff here is z10
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1641,9 +1669,9 @@ AS $$
 WITH
   premvt_aerodrome_label AS (
     SELECT {{additional_name_columns}} *
-    FROM {{omt_func_pref}}_aerodrome_label(ST_TileEnvelope(z,x,y))),
+    FROM {{omt_func_pref}}_aerodrome_label(ST_TileEnvelope(z,x,y),z)),
   premvt_aeroway AS (
-    SELECT * FROM {{omt_func_pref}}_aeroway(ST_TileEnvelope(z,x,y))),
+    SELECT * FROM {{omt_func_pref}}_aeroway(ST_TileEnvelope(z,x,y),z)),
   premvt_boundary AS (
     SELECT * FROM {{omt_func_pref}}_boundary(ST_TileEnvelope(z,x,y),z)),
   premvt_building AS (
@@ -1659,7 +1687,7 @@ WITH
     FROM {{omt_func_pref}}_mountain_peak(ST_TileEnvelope(z,x,y),z)),
   premvt_park AS (
     SELECT {{additional_name_columns}} *
-    FROM {{omt_func_pref}}_park(ST_TileEnvelope(z,x,y))),
+    FROM {{omt_func_pref}}_park(ST_TileEnvelope(z,x,y),z)),
   premvt_place AS (
     SELECT {{additional_name_columns}} *
     FROM {{omt_func_pref}}_place(ST_TileEnvelope(z,x,y),z)),

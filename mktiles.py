@@ -19,16 +19,24 @@ import threading
 import queue
 import typing
 printer_lock=threading.Lock()
+make_cursor_lock=threading.Lock()
 
 import run #local
 
 format='pbf'
 
 
-#maximally parallelize database:new connections only
+#maximally parallelize database: new connections only
 def make_new_connection_cursor() :
-    access=psycopg2.connect(dbaccess)
-    return access.cursor()
+    for i in range(5) :
+        try :
+            with make_cursor_lock :
+                access=psycopg2.connect(dbaccess)
+                return access.cursor()
+        except psycopg2.Error as err :
+            # wait and retry to connect to database
+            time.sleep(10)
+    raise ValueError('Timed out after 50s trying to connect to database')
 
 def gen_zxy_readinput()->typing.Iterator[[int,int,int]] :
     while True :
@@ -74,9 +82,10 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
 
 
 class Writer(threading.Thread) :
-    def __init__(self,c,func_name:str) :
+    def __init__(self,get_new_cursor:typing.Callable[[],psycopg2.extensions.cursor],func_name:str) :
         threading.Thread.__init__(self)
-        self.c=c
+        self.get_new_cursor=get_new_cursor
+        self.c=self.get_new_cursor()
         self.finished=False
         self.func_name=func_name
         self.function_returns_stats=func_name.find('stats')>=0
@@ -149,7 +158,11 @@ class Writer(threading.Thread) :
                 break
             # when function was redefined while running/did not exist when needed
             except psycopg2.Error as err :
-                self.c.execute('ABORT;')
+                try :
+                    self.c.execute('ABORT;')
+                except psycopg2.Error as err2 :
+                    #need to re-connect to database
+                    self.c=self.get_new_cursor()
                 with printer_lock :
                     print(f'{z:2}/{x}/{y}.{format}\t','failed SQL retrying')
         if not success :
@@ -192,7 +205,7 @@ if '--contours' in more :
     func_name='contours_vector'
 
 
-ts=[Writer(make_new_connection_cursor(),func_name) for i in range(5)]
+ts=[Writer(make_new_connection_cursor,func_name) for i in range(5)]
 
 start=time.time()
 

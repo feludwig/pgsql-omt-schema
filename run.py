@@ -223,7 +223,7 @@ need_columns={
         'man_made', 'tower_type', 'start_date', 'wikidata',
         'wikipedia', 'admin_centre_4', 'population',
         'iso3166_1_alpha2','iso3166_1','country_code_fips',
-        'capital', 'information',
+        'capital', 'information','protection_title',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

@@ -50,22 +50,11 @@
 --    -> same ides: minimum tolerance for st_collectoverlapping ? to join the
 --        two lanes of motorways into one at z<10
 --  * transportation FROM planet_osm_point (and transportation_name)-> put into pre_agg_
---  * poi sophisticated filtering PARTITION BY class,
---    eg: among all hospitals, take only the 5 biggest
 --  * landcover: ST_SimplifyPreserveTopology works well, find the correct exponential factor
 --    (it's not 4 !..?)
 --    -> THEN do the same on landuse, water and other aerial big layers
---  * water by-zoom FILTERING!
---  * FORALL layers: osm_id aggregation: somehow only take some ids?
---    -> string_agg(DISTINCT osm_id ORDER BY way_area DESC LIMIT 5,',')
 --  * think about natural earth data: for now it works without... but
 --    lowzooms are horribly unusable
-
--- zoom filtering:
---  water features filter out by area
---  water line features: remove at z<13
--- landcover z>=7 else empty
--- landuse empty ? z>=11 ?
 
 -- implementation details:
 --  see https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions#Inlining_conditions_for_table_functions
@@ -996,12 +985,7 @@ AS $$
 -- delete/disregard brunnels+layer
 SELECT
 {% if with_osm_id %}
-{% if transportation_aggregate_osm_id_reduce %}
-    --LIMIT 5 but that's a syntax error in an aggregate
     array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
-{% else %}
-  string_agg(DISTINCT osm_id,',') AS osm_id,
-{% endif %}
 {% endif %}
   class,subclass,
   (array_agg(DISTINCT network))[1] AS network,NULL AS brunnel,
@@ -1033,7 +1017,7 @@ SELECT
     ELSE array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',')
   END) AS osm_id,
 {% else %}
-  string_agg(DISTINCT osm_id,',') AS osm_id,
+  array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
 {% endif %}
   NULL AS name,ref,
@@ -1056,12 +1040,8 @@ RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
 SELECT
 {% if with_osm_id %}
-{% if transportation_aggregate_osm_id_reduce %}
   --LIMIT 5 but that's a syntax error in an aggregate
   array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
-{% else %}
-  string_agg(DISTINCT osm_id,',') AS osm_id,
-{% endif %}
 {% endif %}
   class,subclass,
   (array_agg(DISTINCT network))[1] AS network,brunnel,
@@ -1098,7 +1078,7 @@ SELECT
     ELSE array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',')
   END) AS osm_id,
 {% else %}
-  string_agg(DISTINCT osm_id,',') AS osm_id,
+  array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',')
 {% endif %}
 {% endif %}
   name,ref,
@@ -1636,8 +1616,6 @@ SELECT
   name,class,intermittent,
   -- openmaptiles uses https://github.com/openmaptiles/osm-lakelines basically a docker wrapper,
   -- of https://github.com/ungarj/label_centerlines/blob/master/label_centerlines/_src.py
-  --ST_AsMVTGeom(ST_PointOnSurface(way),bounds_geom) AS geom
-  -- this thing should be a line, reasonable approx of the osm-lakelines...
   ST_AsMVTGeom(
     {{omt_func_pref}}_get_lakeline(way,substr(osm_id,2)::bigint,substr(osm_id,1,1)),
     bounds_geom) AS geom

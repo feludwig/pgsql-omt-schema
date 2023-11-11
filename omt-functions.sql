@@ -116,6 +116,7 @@ CREATE TYPE {{omt_typ_pref}}_transportation AS (
 CREATE TYPE {{omt_typ_pref}}_transportation_name AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   ref text,
   --ref_length int, -- WARN:IS MISSING!, added later on
   network text,
@@ -129,9 +130,11 @@ CREATE TYPE {{omt_typ_pref}}_transportation_name AS (
   -- MISSING: route_x !!! horrible but ?
   geom geometry
 );
+
 CREATE TYPE {{omt_typ_pref}}_transportation_merged AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   ref text,
   class text,
   subclass text,
@@ -160,6 +163,7 @@ CREATE TYPE {{omt_typ_pref}}_transportation_merged AS (
 CREATE TYPE {{omt_typ_pref}}_aerodrome_label AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   class text,
   iata text,
   icao text,
@@ -216,6 +220,7 @@ CREATE TYPE {{omt_typ_pref}}_landuse AS (
 CREATE TYPE {{omt_typ_pref}}_mountain_peak AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   class text,
   ele integer,
   -- not to do: ele_ft, customary_fr
@@ -226,6 +231,7 @@ CREATE TYPE {{omt_typ_pref}}_mountain_peak AS (
 CREATE TYPE {{omt_typ_pref}}_park AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   class text,
   rank integer,
   geom geometry
@@ -234,6 +240,7 @@ CREATE TYPE {{omt_typ_pref}}_park AS (
 CREATE TYPE {{omt_typ_pref}}_place AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   capital integer,
   class text,
   iso_a2 text,
@@ -244,6 +251,7 @@ CREATE TYPE {{omt_typ_pref}}_place AS (
 CREATE TYPE {{omt_typ_pref}}_poi AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   class text,
   subclass text,
   rank integer,
@@ -257,6 +265,7 @@ CREATE TYPE {{omt_typ_pref}}_poi AS (
 CREATE TYPE {{omt_typ_pref}}_water_merged AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   class text,
   intermittent integer,
   brunnel text,
@@ -274,6 +283,7 @@ CREATE TYPE {{omt_typ_pref}}_water AS (
 CREATE TYPE {{omt_typ_pref}}_water_name AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
+  {{name_columns_typ}}
   class text,
   intermittent integer,
   geom geometry
@@ -281,6 +291,7 @@ CREATE TYPE {{omt_typ_pref}}_water_name AS (
 
 CREATE TYPE {{omt_typ_pref}}_waterway AS (
   name text,
+  {{name_columns_typ}}
   class text,
   brunnel text, -- TODO: only two-value possible
   intermittent integer,
@@ -378,8 +389,13 @@ END
 $$
 LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 
-
-
+{% if make_name_columns_function %}
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_name_lang(tags hstore,iso2_lang text) RETURNS text
+AS $$
+  SELECT (tags->('name:'||iso2_lang));
+$$
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
+{% endif %}
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_landuse(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_landuse
@@ -428,7 +444,7 @@ RETURNS setof {{omt_typ_pref}}_aerodrome_label
 AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-    name,
+    name, {{name_columns_run}}
     (CASE WHEN aerodrome_type IN ('international','public','regional','miltary','private','other')
       THEN aerodrome_type
       ELSE 'other' -- remove any NULLs
@@ -438,6 +454,7 @@ SELECT
 FROM (
   SELECT
 {% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
+    {{point.tags}},
     {{point.name}},{{point.aeroway_v}},{{point.aerodrome_type}},
     {{point.iata}},{{point.icao}},{{point.ele}},{{point.way}}
   FROM {{point.table_name}}
@@ -447,6 +464,7 @@ FROM (
   (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
     WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
 {% endif %}
+    {{polygon.tags}},
     {{polygon.name}},{{polygon.aeroway_v}},{{polygon.aerodrome_type}},
     {{polygon.iata}},{{polygon.icao}},{{polygon.ele}},{{polygon.way}}
   FROM {{polygon.table_name}}
@@ -593,7 +611,7 @@ SELECT
 {% if with_osm_id %}
   array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
-  name,class,
+  name,{{name_columns_aggregate_run}} class,
   (row_number() OVER (ORDER BY sum(way_area) DESC))::int AS rank,
   ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
 FROM (
@@ -602,6 +620,7 @@ FROM (
     (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
       WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
   {% endif %}
+    {{polygon.tags}}, -- for name languages
     (CASE
       WHEN z<=12 AND {{polygon.way_area_v}}<3e5 THEN NULL
       ELSE {{polygon.name_v}}
@@ -627,12 +646,12 @@ RETURNS setof {{omt_typ_pref}}_mountain_peak
 AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-  name,class,ele,rank,
+  name, {{name_columns_subquery_propagate}} class,ele,rank,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (
   SELECT
   {% if with_osm_id %} osm_id, {% endif %}
-    name,class,ele,
+    name, {{name_columns_run}} class,ele,
     (row_number() OVER (ORDER BY 10000*score+(CASE WHEN
           ele IS NULL THEN 0 ELSE ele END) DESC))::int AS rank,
     --also take score up: for zoom filtering
@@ -640,6 +659,7 @@ FROM (
   FROM (
     SELECT
   {% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
+      {{point.tags}},
       {{point.name}},{{omt_func_pref}}_text_to_int_null({{point.ele_ctv}}) AS ele,
       -- score of 3 means popular item: should be shown first
       ({{point.name_e}}::int+{{point.wikipedia_e}}::int+{{point.wikidata_e}}::int) AS score,
@@ -652,6 +672,7 @@ FROM (
     (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
       WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
   {% endif %}
+      {{line.tags}},
       {{line.name}},{{omt_func_pref}}_text_to_int_null({{line.ele_ctv}}) AS ele,
       -- score of 3 means popular item: should be shown first
       ({{line.name_e}}::int+{{line.wikipedia_e}}::int+{{line.wikidata_e}}::int) AS score,
@@ -832,7 +853,7 @@ RETURNS setof {{omt_typ_pref}}_transportation_merged
 AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-  name,ref,class,
+  name, {{name_columns_run}} ref,class,
   (CASE WHEN class IN ('bicycle_route') THEN network
     ELSE subclass END) AS subclass,
   network,brunnel,oneway,ramp,
@@ -845,6 +866,7 @@ FROM (
   (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
     WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
 {% endif %}
+    {{line.tags}},
     {{line.name}},
     {{line.ref}},
   -- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
@@ -1018,7 +1040,7 @@ SELECT
   array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
 {% endif %}
-  NULL AS name,ref,
+  NULL AS name, {{name_columns_null}} ref,
   (array_agg(DISTINCT network))[1] AS network,class,subclass,
   NULL AS brunnel,
   (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
@@ -1079,7 +1101,7 @@ SELECT
   array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',')
 {% endif %}
 {% endif %}
-  name,ref,
+  name, {{name_columns_subquery_aggregate_propagate}} ref,
   (array_agg(DISTINCT network))[1] AS network,
   class,subclass,(array_agg(DISTINCT brunnel))[1] AS brunnel,
   (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
@@ -1133,11 +1155,11 @@ LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_waterway(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
-SELECT name,class,
+SELECT name, {{name_columns_aggregate_run}} class,
   (CASE WHEN z<=10 THEN NULL ELSE brunnel END) AS brunnel,intermittent,
   ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
 FROM (
-  SELECT name,{{line.waterway_v}} AS class,
+  SELECT {{line.name}},{{line.tags}},{{line.waterway_v}} AS class,
     (CASE
       WHEN {{line.bridge_v}} IS NOT NULL AND {{line.bridge_v}}!='no' THEN 'bridge'
       WHEN {{line.tunnel_v}} IS NOT NULL AND {{line.tunnel_v}}!='no' THEN 'tunnel'
@@ -1165,7 +1187,7 @@ RETURNS setof {{omt_typ_pref}}_place
 AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-  name,capital,class,iso_a2,
+  name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
   (ntile(9) OVER (ORDER BY score DESC))::int+1 AS rank,
   ST_AsMVTGeom(way,bounds_geom) AS geom
 FROM (
@@ -1175,7 +1197,7 @@ FROM (
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
       WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
     END) AS osm_id, {% endif %}
-    name,admin_level::integer AS capital,place AS class,iso_a2,
+    name,{{name_columns_run}} admin_level::integer AS capital,place AS class,iso_a2,
     -- 1e3*1.9^(mlt^1.08)
     ((power(1.9,power({{omt_func_pref}}_get_place_multiplier(place),1.08))::int*1e3)+
       --sqlglot does not like implicit a*b+c*d, instead (a*b)+(c*d)
@@ -1185,6 +1207,7 @@ FROM (
   FROM (
     SELECT
 {% if with_osm_id %} {{polygon.osm_id}}, {% endif %}
+      {{polygon.tags}},
       {{polygon.name}},{{polygon.place}},{{polygon.admin_level}},
       COALESCE({{polygon.iso3166_1_alpha2_v}},{{polygon.iso3166_1_v}},{{polygon.country_code_fips_v}}) AS iso_a2,
       {{polygon.way}},
@@ -1199,6 +1222,7 @@ FROM (
     UNION ALL
     SELECT
 {% if with_osm_id %} {{point.osm_id}}, {% endif %}
+      {{point.tags}},
       {{point.name}},{{point.place}},{{point.admin_level}},
       COALESCE({{point.iso3166_1_alpha2_v}},{{point.iso3166_1_v}},{{point.country_code_fips_v}}) AS iso_a2,
       {{point.way}},
@@ -1268,7 +1292,7 @@ AS $$
 -- https://wiki.openstreetmap.org/wiki/OpenStreetMap_Carto/Symbols#Shops_and_services
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-  name,class,subclass,
+  name,{{name_columns_subquery_propagate}} class,subclass,
   -- WARNING: not the final rank value, intermediary result only
   (row_number() OVER (ORDER BY ((CASE
     WHEN name IS NOT NULL THEN -100 ELSE 0
@@ -1279,6 +1303,7 @@ SELECT
   agg_stop,{{omt_func_pref}}_text_to_int_null(level) AS level,layer,indoor,geom
 FROM
 (SELECT name,
+  {{name_columns_subquery_propagate}}
 {% if with_osm_id %} osm_id, {% endif %}
 	(CASE WHEN
 		subclass IN ('accessories','antiques','beauty','bed','boutique','camera',
@@ -1346,6 +1371,7 @@ FROM
   agg_stop,level,layer,indoor,score,start_date_year,
   geom
 	FROM (SELECT name,
+    {{name_columns_run}}
 {% if with_osm_id %} osm_id, {% endif %}
 		(CASE WHEN
 		waterway IN ('dock')
@@ -1437,6 +1463,7 @@ FROM
 	FROM (
     SELECT
 {% if with_osm_id %} 'n'||{{point.osm_id_v}} AS osm_id, {% endif %}
+      {{point.tags}}, -- for name languages
       {{point.name}},{{point.waterway}},{{point.building}},{{point.shop}},
       {{point.highway}},{{point.leisure}},{{point.historic}},
       {{point.railway}},{{point.sport}},{{point.office}},{{point.tourism}},
@@ -1456,6 +1483,7 @@ FROM
   (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
     WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
 {% endif %}
+      {{polygon.tags}}, -- for name languages
       {{polygon.name}},{{polygon.waterway}},{{polygon.building}},{{polygon.shop}},
       {{polygon.highway}},{{polygon.leisure}},{{polygon.historic}},
       {{polygon.railway}},{{polygon.sport}},{{polygon.office}},{{polygon.tourism}},
@@ -1546,7 +1574,7 @@ AS $$
 -- The rank copmutation and documentation are very unclear and how they are now could be better
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-  name,class,subclass,
+  name,{{name_columns_subquery_propagate}} class,subclass,
 {% if same_rank_poi_high_zooms %} (CASE WHEN z>=15 THEN 30::int ELSE {%endif%}
   (row_number() OVER (ORDER BY rank ASC))::int
 {% if same_rank_poi_high_zooms %} END) {%endif%} AS rank,
@@ -1554,7 +1582,7 @@ SELECT
 FROM (
   SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-    name,class,subclass,rank,
+    name,{{name_columns_subquery_propagate}} class,subclass,rank,
     (row_number() OVER (PARTITION BY(class)
       ORDER BY rank ASC)) AS inclass_rank,
     agg_stop,level,layer,indoor,geom
@@ -1568,42 +1596,45 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_agg_water_merged(bounds_geom ge
 RETURNS setof {{omt_typ_pref}}_water_merged
 AS $$
 SELECT
+  osm_id,name, {{name_columns_run}} class,intermittent,brunnel,way
+FROM (
+  SELECT
 {% if with_osm_id %}
   (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
     WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
 {% endif %}
-  {{polygon.name}},
-  (CASE
-    WHEN {{polygon.water_v}} IN ('river','lake','ocean') THEN {{polygon.water_v}}
-    WHEN {{polygon.waterway_v}} IN ('dock') THEN 'dock'
-    WHEN {{polygon.leisure_v}} IN ('swimming_pool') THEN 'swimming_pool'
-    ELSE 'lake'
-  END) AS class,
-  (CASE
-    WHEN {{polygon.intermittent_v}} IN ('yes') THEN 1
-    ELSE 0
-  END) AS intermittent,
-  (CASE
-    WHEN {{polygon.bridge_v}} IS NOT NULL AND {{polygon.bridge_v}}!='no' THEN 'bridge'
-    WHEN {{polygon.tunnel_v}} IS NOT NULL AND {{polygon.tunnel_v}}!='no' THEN 'tunnel'
-  END) AS brunnel,
-  {{polygon.way}}
-FROM {{polygon.table_name}}
-WHERE ({{polygon.covered_v}} IS NULL OR {{polygon.covered_v}} != 'yes') AND (
-    {{polygon.water_v}} IN ('river','lake') OR {{polygon.waterway_v}} IN ('dock')
-    OR {{polygon.natural_v}} IN ('water','bay','spring') OR {{polygon.leisure_v}} IN ('swimming_pool')
-    OR {{polygon.landuse_v}} IN ('reservoir','basin','salt_pond'))
-  AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=12 AND {{polygon.way_area_v}}>1500) OR
-    (z>=11 AND {{polygon.way_area_v}}>6000) OR
-    (z>=10 AND {{polygon.way_area_v}}>24e3) OR
-    (z>=09 AND {{polygon.way_area_v}}>96e3) OR
-    (z>=08 AND {{polygon.way_area_v}}>384e3) OR
-    (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
-    (z>=06 AND {{polygon.way_area_v}}>6e6) OR
-    (z>=05 AND {{polygon.way_area_v}}>24e6) OR
-    (z>=04 AND {{polygon.way_area_v}}>96e6)
-  );
+    {{polygon.name}},{{polygon.tags}},
+    (CASE
+      WHEN {{polygon.water_v}} IN ('river','lake','ocean') THEN {{polygon.water_v}}
+      WHEN {{polygon.waterway_v}} IN ('dock') THEN 'dock'
+      WHEN {{polygon.leisure_v}} IN ('swimming_pool') THEN 'swimming_pool'
+      ELSE 'lake'
+    END) AS class,
+    (CASE
+      WHEN {{polygon.intermittent_v}} IN ('yes') THEN 1
+      ELSE 0
+    END) AS intermittent,
+    (CASE
+      WHEN {{polygon.bridge_v}} IS NOT NULL AND {{polygon.bridge_v}}!='no' THEN 'bridge'
+      WHEN {{polygon.tunnel_v}} IS NOT NULL AND {{polygon.tunnel_v}}!='no' THEN 'tunnel'
+    END) AS brunnel,
+    {{polygon.way}}
+  FROM {{polygon.table_name}}
+  WHERE ({{polygon.covered_v}} IS NULL OR {{polygon.covered_v}} != 'yes') AND (
+      {{polygon.water_v}} IN ('river','lake') OR {{polygon.waterway_v}} IN ('dock')
+      OR {{polygon.natural_v}} IN ('water','bay','spring') OR {{polygon.leisure_v}} IN ('swimming_pool')
+      OR {{polygon.landuse_v}} IN ('reservoir','basin','salt_pond'))
+    AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
+      (z>=12 AND {{polygon.way_area_v}}>1500) OR
+      (z>=11 AND {{polygon.way_area_v}}>6000) OR
+      (z>=10 AND {{polygon.way_area_v}}>24e3) OR
+      (z>=09 AND {{polygon.way_area_v}}>96e3) OR
+      (z>=08 AND {{polygon.way_area_v}}>384e3) OR
+      (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
+      (z>=06 AND {{polygon.way_area_v}}>6e6) OR
+      (z>=05 AND {{polygon.way_area_v}}>24e6) OR
+      (z>=04 AND {{polygon.way_area_v}}>96e6)
+    )) AS foo;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1612,7 +1643,7 @@ RETURNS setof {{omt_typ_pref}}_water_name
 AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
-  name,class,intermittent,
+  name, {{name_columns_subquery_propagate}} class,intermittent,
   -- openmaptiles uses https://github.com/openmaptiles/osm-lakelines basically a docker wrapper,
   -- of https://github.com/ungarj/label_centerlines/blob/master/label_centerlines/_src.py
   ST_AsMVTGeom(

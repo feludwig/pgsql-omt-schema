@@ -153,7 +153,9 @@ def make_global_dict(c:psycopg2.extensions.cursor,
         result[k]=GeoTable(c,choice[1],need_columns[k],aliases[k])
     return result
 
-# name you want to call it by (so without special symbols) -> name in the database to check
+name_columns_languages=['en','de','fr','ja','ar','ru']
+
+# name you want to call column by (so without special symbols) -> name in the database to check
 aliases={
     'point':{
         'housenumber':'addr:housenumber',
@@ -482,6 +484,11 @@ TEMPLATE_VARS={
     # "uninteresting", heuristic: for now just when name IS NULL.
     # only has an effect if with_osm_id=True
     'transportation_aggregate_osm_id_reduce':True,
+    # whether to include the {{omt_func_pref}}_make_name_columns({{tags}}) and use it
+    # or not.
+    # if FALSE, name_columns_languages has no meaning and only "name" contains local name
+    # if TRUE, "name" contains local name and "name_{iso2_code}" columns are added
+    'make_name_columns_function':True,
     # WARNING: set to '' to ignore. else NEEDS to have a trailing comma
     # this is only added at the end, after the typedefed-rows have been
     #   generated. tags are not available anymore
@@ -506,6 +513,36 @@ TEMPLATE_VARS={
     # name for the lake_centerlines loaded geojson data table (11MB size)
     'lake_table_name':'lake_centerline',
 }
+if TEMPLATE_VARS['make_name_columns_function'] :
+    # with comma the end
+    ns=[f'name_{iso2},' for iso2 in name_columns_languages]
+    nlls=[f'NULL AS name_{iso2},' for iso2 in name_columns_languages]
+    ts=[f'name_{iso2} text,' for iso2 in name_columns_languages]
+    # ADD at the end
+    TEMPLATE_VARS['additional_name_columns']+=''.join(ns)
+    fns=[f"(tags->'name:{iso2}') AS name_{iso2}," for iso2 in name_columns_languages]
+    agns=[f"(array_agg(DISTINCT tags->'name:{iso2}' ORDER BY (tags->'name:{iso2}') NULLS LAST))[1] AS name_{iso2},"
+            for iso2 in name_columns_languages]
+    agsqns=[f'(array_agg(DISTINCT "name_{iso2}" ORDER BY ("name_{iso2}") NULLS LAST))[1] AS name_{iso2},'
+            for iso2 in name_columns_languages]
+    # omt_get_name_langs(tags,'fr') AS name_fr, ...
+    TEMPLATE_VARS['name_columns_run']=''.join(fns)
+    TEMPLATE_VARS['name_columns_null']=''.join(nlls)
+    TEMPLATE_VARS['name_columns_aggregate_run']=''.join(agns)
+    #without the initial additional_name_columns
+    TEMPLATE_VARS['name_columns_subquery_propagate']=''.join(ns)
+    TEMPLATE_VARS['name_columns_subquery_aggregate_propagate']=''.join(agsqns)
+    TEMPLATE_VARS['name_columns_typ']=''.join(ts)
+else :
+    # avoid having to write {% if make_name_columns_function %}
+    #   {{name_columns_run}} {% endif %} every time...
+    TEMPLATE_VARS['name_columns_typ']=''
+    TEMPLATE_VARS['name_columns_null']=''
+    TEMPLATE_VARS['name_columns_run']=''
+    TEMPLATE_VARS['name_columns_aggregate_run']=''
+    TEMPLATE_VARS['name_columns_subquery_propagate']=''
+    TEMPLATE_VARS['name_columns_subquery_aggregate_propagate']=''
+
 
 if __name__=='__main__' :
     import sys

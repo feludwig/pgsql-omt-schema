@@ -426,7 +426,8 @@ WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','reside
   OR {{polygon.amenity_v}} IN ('bus_station','school','university','kindergarden','college',
       'library','hospital','grave_yard') OR {{polygon.waterway_v}} IN ('dam')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=12 AND {{polygon.way_area_v}}>1500) OR
+    (z>=13) OR
+    (z=12 AND {{polygon.way_area_v}}>1500) OR
     (z=11 AND {{polygon.way_area_v}}>6000) OR
     (z=10 AND {{polygon.way_area_v}}>24e3) OR
     (z=09 AND {{polygon.way_area_v}}>96e3) OR
@@ -564,11 +565,12 @@ FROM (SELECT
   OR {{polygon.leisure_v}} IN ('park','garden','golf_course')
   OR {{polygon.wetland_v}} IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=13 AND {{polygon.way_area_v}}>1500) OR
-    (z>=12 AND {{polygon.way_area_v}}>6000) OR
-    (z>=11 AND {{polygon.way_area_v}}>25e3) OR
-    (z>=10 AND {{polygon.way_area_v}}>130e3) OR
-    (z>=09 AND {{polygon.way_area_v}}>600e3) OR
+    (z>=14) OR
+    (z=13 AND {{polygon.way_area_v}}>1500) OR
+    (z=12 AND {{polygon.way_area_v}}>6000) OR
+    (z=11 AND {{polygon.way_area_v}}>25e3) OR
+    (z=10 AND {{polygon.way_area_v}}>130e3) OR
+    (z=09 AND {{polygon.way_area_v}}>600e3) OR
     (z>=04 AND {{polygon.way_area_v}}>2500e3)
     -- show nothing at lower zooms
   )
@@ -1625,14 +1627,15 @@ FROM (
       OR {{polygon.natural_v}} IN ('water','bay','spring') OR {{polygon.leisure_v}} IN ('swimming_pool')
       OR {{polygon.landuse_v}} IN ('reservoir','basin','salt_pond'))
     AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-      (z>=12 AND {{polygon.way_area_v}}>1500) OR
-      (z>=11 AND {{polygon.way_area_v}}>6000) OR
-      (z>=10 AND {{polygon.way_area_v}}>24e3) OR
-      (z>=09 AND {{polygon.way_area_v}}>96e3) OR
-      (z>=08 AND {{polygon.way_area_v}}>384e3) OR
-      (z>=07 AND {{polygon.way_area_v}}>1536e3) OR
-      (z>=06 AND {{polygon.way_area_v}}>6e6) OR
-      (z>=05 AND {{polygon.way_area_v}}>24e6) OR
+      (z>=13) OR
+      (z=12 AND {{polygon.way_area_v}}>1500) OR
+      (z=11 AND {{polygon.way_area_v}}>6000) OR
+      (z=10 AND {{polygon.way_area_v}}>24e3) OR
+      (z=09 AND {{polygon.way_area_v}}>96e3) OR
+      (z=08 AND {{polygon.way_area_v}}>384e3) OR
+      (z=07 AND {{polygon.way_area_v}}>1536e3) OR
+      (z=06 AND {{polygon.way_area_v}}>6e6) OR
+      (z=05 AND {{polygon.way_area_v}}>24e6) OR
       (z>=04 AND {{polygon.way_area_v}}>96e6)
     )) AS foo;
 $$

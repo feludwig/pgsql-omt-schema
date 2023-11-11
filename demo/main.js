@@ -21,11 +21,11 @@ function enable_cycle_routes() {
     // no new sources, but add a stub for the copyright attribution
     document.map.addSource("cycle-routes-stub",c.sources[Object.keys(c.sources)[0]]);
     c.layers.forEach(l=>{
-			if (l.id.includes('background')) {                                                         
-        // add background layers UNDER tunnel_service_track_casing                               
-        document.map.addLayer(l,'tunnel_service_track_casing');                                  
-      } else {                                                                                   
-        document.map.addLayer(l);                                                                
+      if (l.id.includes('background') && document.map.getLayer('tunnel_service_track_casing')!=null) {
+        // add background layers UNDER tunnel_service_track_casing
+        document.map.addLayer(l,'tunnel_service_track_casing');
+      } else {
+        document.map.addLayer(l);
       }
       layer_ids.push(l.id);
     });
@@ -54,7 +54,7 @@ function enable_contours() {
     });
     c.layers.forEach(l=>document.map.addLayer(l));
   });
-  //enable contourscheckbox 
+  //enable contourscheckbox
   var chb=document.querySelector('#contourscheckbox');
   chb.disabled=false;
   chb.checked=true;
@@ -193,7 +193,9 @@ function replace_recursive_prop(subject,source,target) {
   // any-type subject style property: replace source with target.
   // for object and list types, descend recursively while keeping
   // everything else the same
-  if (typeof(subject)=='number'||typeof(subject)=='boolean') {
+  if (JSON.stringify(subject)==JSON.stringify(source)) {
+    return target;
+  } else if (typeof(subject)=='number'||typeof(subject)=='boolean') {
     return subject;
   } else if (typeof(subject)=='string') {
     return subject.replaceAll(source,target);
@@ -206,16 +208,36 @@ function replace_recursive_prop(subject,source,target) {
   return subject;
 }
 
-function set_name_property() {
+function set_name_property(lang) {
   // go through style and change every occurence of "name:latin" to "name"
+  if (lang==null) {
+    var new_name=['get','name'];
+  } else if (lang=='local') {
+    var new_name=['get','name'];
+  } else {
+    var new_name=['case',['has','name_'+lang],['get','name_'+lang],['get','name']];
+  }
   document.map.getStyle().layers.forEach(l=>{
     if (l.layout!=null && l.layout['text-field']!=null) {
       //console.log(l.id,'orig=',JSON.stringify(l.layout['text-field']));
-      var new_prop=replace_recursive_prop(l.layout['text-field'],'name:latin','name');
+      var in_prop=document.map.getLayoutProperty(l.id,'text-field');
+      if (lang==null) {
+        // cannonicalize
+        var new_prop=replace_recursive_prop(in_prop,'{name:latin}',
+          ['get','name:latin']);
+        var new_prop=replace_recursive_prop(in_prop,'{name:latin}\n{name:nonlatin}',
+          ['concat',['get','name:latin'],'\n',['get','name:nonlatin']]);
+        new_prop=replace_recursive_prop(new_prop,['get','name:latin'],new_name);
+      } else if (lang=='local') {
+        var new_prop=replace_recursive_prop(in_prop,document.current_name,new_name);
+      } else {
+        var new_prop=replace_recursive_prop(in_prop,document.current_name,new_name);
+      }
       //console.log('new=',JSON.stringify(new_prop));
       document.map.setLayoutProperty(l.id,'text-field',new_prop);
     }
   });
+  document.current_name=new_name;
 }
 
 function add_click_listener() {
@@ -289,10 +311,9 @@ function enable_style_selector() {
 }
 
 function switch_style_over(tgt_index) {
+  document.querySelector('select[id=styleselector]').disabled=true;
   document.map.setStyle(document.styles[tgt_index].href);
-  document.map.on('styledata',()=>{
-    // warning: triggers multiple times at each style data load
-    console.log('concurrency issue just below: but just ignore it!...');
+  document.map.once('styledata',()=>{
     if (document.map.getSource('contours')==null) {
       enable_contours();
     }
@@ -300,11 +321,30 @@ function switch_style_over(tgt_index) {
     if (document.map.getSource('playground')==null) {
       add_geojson_playground();
     }
-    set_name_property(); // assume everything uses "name:latin" in the style
+  });
+  document.map.once('render',(e)=>{
+    set_name_property(); // cannonicalize name:latin -> name
+    set_name_property(document.current_name);
+    document.map.once('render',(e)=>{
+      document.querySelector('select[id=styleselector]').disabled=false;
+    });
+  });
+}
+
+function add_name_controls() {
+  var all_name_selectors=document.querySelectorAll('input[id^=rad_]');
+  all_name_selectors.forEach((e)=>{
+    e.onchange=(ev)=>{
+      console.log('radios=',all_name_selectors);
+      all_name_selectors.forEach((r)=>{r.disabled=true});
+      set_name_property(ev.target.value);
+      all_name_selectors.forEach((r)=>{r.disabled=false});
+    };
   });
 }
 
 function main() {
+  document.querySelectorAll('input,button,select').forEach((r)=>{r.disabled=true});
   document.styles=[
     // take the first as default on load
     {name:'OpenStreetMap Carto',href:'demo/styles/openstreetmap-vector.json'},
@@ -331,8 +371,9 @@ function main() {
     document.querySelector('p#loading').innerHTML=displ_msg;
     alert(displ_msg);
   }
-  document.map.on('load',function() {
+  document.map.once('load',function() {
     set_name_property();
+    add_name_controls();
     document.querySelector('p#loading').remove();
     enable_contours();
     enable_cycle_routes();
@@ -344,6 +385,9 @@ function main() {
     add_geojson_playground();
     // depends on geojson playground
     add_click_listener();
+  });
+  document.map.once('render',(e)=>{
+    document.querySelectorAll('input,button,select').forEach((r)=>{r.disabled=false});
   });
 }
 

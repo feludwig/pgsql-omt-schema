@@ -58,6 +58,22 @@
     <button onclick="add_relief();">Add relief</button>
     <button onclick="add_lhc_test();">Display <abbr title="Large Hadron Collider, largest particle accelerator on the planet (on Switzerland/France border)">
     Go to <a href="#10.78/46.2741/6.055">LHC</a>
+    <form>
+      <p>Language&nbsp;&nbsp;
+        <input type="radio" id="rad_local" name="lang" value="local" checked="true">
+        <label for="rad_local">local</label>
+      </p><p>
+        <input type="radio" id="rad_en" name="lang" value="en">
+        <label for="rad_en">en+local</label>
+        <input type="radio" id="rad_ja" name="lang" value="ja">
+        <label for="rad_ja">ja+local</label>
+      </p><p>
+        <input type="radio" id="rad_ar" name="lang" value="ar">
+        <label for="rad_ar">ar+local</label>
+        <input type="radio" id="rad_ru" name="lang" value="ru">
+        <label for="rad_ru">ru+local</label>
+      </p>
+    </form>
   </div>
 
   <div id="map"></div>

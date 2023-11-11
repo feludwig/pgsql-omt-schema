@@ -20,3 +20,6 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS {{omt_view_pref}}_country_boundaries AS
   WHERE {{line.admin_level_v}} IS NOT NULL AND {{line.admin_level_v}} IN ('1','2')
     AND {{polygon.admin_level_v}}={{line.admin_level_v}}
     AND ST_Intersects({{polygon.way_v}},{{line.way_v}});
+
+CREATE INDEX IF NOT EXISTS {{omt_idx_pref}}_country_boundaries_idx
+  ON {{omt_view_pref}}_country_boundaries USING GIST(way);

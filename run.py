@@ -519,7 +519,6 @@ if TEMPLATE_VARS['make_name_columns_function'] :
     nlls=[f'NULL AS name_{iso2},' for iso2 in name_columns_languages]
     ts=[f'name_{iso2} text,' for iso2 in name_columns_languages]
     # ADD at the end
-    TEMPLATE_VARS['additional_name_columns']+=''.join(ns)
     fns=[f"(tags->'name:{iso2}') AS name_{iso2}," for iso2 in name_columns_languages]
     agns=[f"(array_agg(DISTINCT tags->'name:{iso2}' ORDER BY (tags->'name:{iso2}') NULLS LAST))[1] AS name_{iso2},"
             for iso2 in name_columns_languages]
@@ -529,7 +528,6 @@ if TEMPLATE_VARS['make_name_columns_function'] :
     TEMPLATE_VARS['name_columns_run']=''.join(fns)
     TEMPLATE_VARS['name_columns_null']=''.join(nlls)
     TEMPLATE_VARS['name_columns_aggregate_run']=''.join(agns)
-    #without the initial additional_name_columns
     TEMPLATE_VARS['name_columns_subquery_propagate']=''.join(ns)
     TEMPLATE_VARS['name_columns_subquery_aggregate_propagate']=''.join(agsqns)
     TEMPLATE_VARS['name_columns_typ']=''.join(ts)

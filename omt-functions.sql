@@ -1714,7 +1714,7 @@ WITH
     SELECT
       {% if with_osm_id %} osm_id, {% endif %}
       {{additional_name_columns}}
-      name,
+      name, {{name_columns_subquery_propagate}}
       replace(ref,';',E'\n') AS ref,length(ref) AS ref_length,
       network,class,subclass,brunnel,level,layer,indoor,
       geom

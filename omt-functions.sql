@@ -959,7 +959,7 @@ FROM (
     OR {{line.route_v}} IN ('bicycle') --NOTE:extension
   ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
 WHERE (
-     (z>=12) -- take everything
+     (z>=12 AND class IS NOT NULL) -- take everything
   OR (z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
   OR (z>=10 AND substring(class,'([a-z]+)') IN ('transit'))
   OR (z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','aerialway'))

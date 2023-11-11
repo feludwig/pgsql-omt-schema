@@ -519,7 +519,7 @@ SELECT
     WHEN z=06 THEN ST_SimplifyPreserveTopology(way,1600)
     WHEN z=05 THEN ST_SimplifyPreserveTopology(way,3e3)
     WHEN z=04 THEN ST_SimplifyPreserveTopology(way,6e3)
-    ELSE ST_SimplifyPreserveTopology(way,1/0) -- make error: should not happen!
+    ELSE ST_SimplifyPreserveTopology(way,-1) -- make error: should not happen!
     END,bounds_geom) AS geom
 FROM (SELECT
 {% if with_osm_id %}
@@ -551,10 +551,7 @@ FROM (SELECT
     (z>=11 AND {{polygon.way_area_v}}>25e3) OR
     (z>=10 AND {{polygon.way_area_v}}>130e3) OR
     (z>=09 AND {{polygon.way_area_v}}>600e3) OR
-    (z>=08 AND {{polygon.way_area_v}}>2500e3) OR
-    (z>=07 AND {{polygon.way_area_v}}>10e6) OR
-    (z>=06 AND {{polygon.way_area_v}}>40e6) OR
-    (z>=05 AND z<=04 AND {{polygon.way_area_v}}>160e6)
+    (z>=04 AND {{polygon.way_area_v}}>2500e3)
     -- show nothing at lower zooms
   )
   GROUP BY(subclass)
@@ -969,7 +966,7 @@ WHERE (
   OR (z>=07 AND substring(class,'([a-z]+)') IN ('primary','ferry','rail'))
   OR (z>=04 AND substring(class,'([a-z]+)') IN ('motorway','trunk'))
     --extension
-  OR (z>=04 AND class='bicycle_route' AND network='national')
+  OR (z>=06 AND class='bicycle_route' AND network='national')
   OR (z>=11 AND class='bicycle_route' AND network='local')
   OR (z>=10 AND class='bicycle_route' AND network='regional')
 );
@@ -1156,7 +1153,8 @@ WHERE
     (z>=13)
     OR (z<13 AND z>=12 AND class IN ('river','canal'))
     OR (z<12 AND z>=11 AND class IN ('river'))
-    OR (z<11 AND name IS NOT NULL AND class IN ('river'))
+    OR (z<11 AND z>=07 AND name IS NOT NULL AND class IN ('river'))
+    --cutoff at z07
 GROUP BY(name,class,CASE WHEN z<=10 THEN NULL ELSE brunnel END,intermittent);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;

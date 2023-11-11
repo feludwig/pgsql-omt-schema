@@ -118,6 +118,9 @@ class Writer(threading.Thread) :
                     per_layer_stats[k]=[0]*4
                 for ix in (0,1,2,3) :
                     per_layer_stats[k][ix]+=v[ix]
+        #sort
+        per_layer_stats_l=[(bytes,k,count,pcent,rowcount) for k,(count,pcent,bytes,rowcount) in per_layer_stats.items()]
+        per_layer_stats={k:(count,pcent,bytes,rowcount) for (bytes,k,count,pcent,rowcount) in sorted(per_layer_stats_l,reverse=True)}
         #print
         headers=['layer_name','avg_pcent','avg_bytes','avg_rowcount']
         data=[(k,

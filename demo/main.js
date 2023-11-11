@@ -335,7 +335,6 @@ function add_name_controls() {
   var all_name_selectors=document.querySelectorAll('input[id^=rad_]');
   all_name_selectors.forEach((e)=>{
     e.onchange=(ev)=>{
-      console.log('radios=',all_name_selectors);
       all_name_selectors.forEach((r)=>{r.disabled=true});
       set_name_property(ev.target.value);
       all_name_selectors.forEach((r)=>{r.disabled=false});

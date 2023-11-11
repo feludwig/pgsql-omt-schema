@@ -208,7 +208,7 @@ if '--contours' in more :
     func_name='contours_vector'
 
 
-ts=[Writer(make_new_connection_cursor,func_name) for i in range(5)]
+ts=[Writer(make_new_connection_cursor,func_name) for i in range(30)]
 
 start=time.time()
 

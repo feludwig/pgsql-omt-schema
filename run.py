@@ -498,8 +498,12 @@ TEMPLATE_VARS={
     'omt_func_pref':'public.omt',
     # all views/matviews will have this prefix
     'omt_view_pref':'public.planet_osm',
+    # indexes on those views/matviews will have this prefix.
+    # WARNING: schema unsupported ("syntax error")
+    'omt_idx_pref':'planet_osm',
     # DOES NOT use the omt_func_pref
     'omt_all_func':'public.omt_all',
+    # name for the lake_centerlines loaded geojson data table (11MB size)
     'lake_table_name':'lake_centerline',
 }
 

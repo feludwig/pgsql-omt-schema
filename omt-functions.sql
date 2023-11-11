@@ -50,9 +50,6 @@
 --    -> same ides: minimum tolerance for st_collectoverlapping ? to join the
 --        two lanes of motorways into one at z<10
 --  * transportation FROM planet_osm_point (and transportation_name)-> put into pre_agg_
---  * landcover: ST_SimplifyPreserveTopology works well, find the correct exponential factor
---    (it's not 4 !..?)
---    -> THEN do the same on landuse, water and other aerial big layers
 --  * think about natural earth data: for now it works without... but
 --    lowzooms are horribly unusable
 
@@ -417,7 +414,17 @@ SELECT
     WHEN {{polygon.place_v}} IN ('suburbquarter','neighbourhood') THEN {{polygon.place_v}}
     WHEN {{polygon.waterway_v}} IN ('dam') THEN {{polygon.waterway_v}}
   END) AS class,
-  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting({{polygon.way_v}}))),bounds_geom) AS geom
+  ST_SimplifyPreserveTopology(ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(
+    (CASE
+        WHEN z>=11 THEN way
+        WHEN z=10 THEN ST_Buffer(way,60)
+        WHEN z=09 THEN ST_Buffer(way,120)
+        WHEN z=08 THEN ST_Buffer(way,250)
+        WHEN z=07 THEN ST_Buffer(way,500)
+        WHEN z=06 THEN ST_Buffer(way,1e3)
+        ELSE NULL
+    END)
+  ))),bounds_geom),10) AS geom
 FROM {{polygon.table_name}}
 WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
       'industrial','garages','retail')
@@ -528,18 +535,7 @@ SELECT
       'saltern', 'tidalflat', 'saltmarsh', 'mangrove' ) THEN 'wetland'
     WHEN subclass IN ('beach', 'sand', 'dune' ) THEN 'sand'
   END ) AS class,subclass,
-  ST_AsMVTGeom(CASE
-    WHEN z>=12 THEN way
-    WHEN z=11 THEN ST_SimplifyPreserveTopology(way,25)
-    WHEN z=10 THEN ST_SimplifyPreserveTopology(way,100)
-    WHEN z=09 THEN ST_SimplifyPreserveTopology(way,200)
-    WHEN z=08 THEN ST_SimplifyPreserveTopology(way,400)
-    WHEN z=07 THEN ST_SimplifyPreserveTopology(way,800)
-    WHEN z=06 THEN ST_SimplifyPreserveTopology(way,1600)
-    WHEN z=05 THEN ST_SimplifyPreserveTopology(way,3e3)
-    WHEN z=04 THEN ST_SimplifyPreserveTopology(way,6e3)
-    ELSE ST_SimplifyPreserveTopology(way,-1) -- make error: should not happen!
-    END,bounds_geom) AS geom
+  ST_SimplifyPreserveTopology(ST_AsMVTGeom(way,bounds_geom),10) AS geom
 FROM (SELECT
 {% if with_osm_id %}
   array_to_string((array_agg(DISTINCT CASE
@@ -556,7 +552,17 @@ FROM (SELECT
         'saltmarsh','mangrove') THEN {{polygon.wetland_v}}
       ELSE NULL
     END ) AS subclass,
-  ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))) AS way
+  ST_UnaryUnion(unnest(ST_ClusterIntersecting(CASE
+        WHEN z>=11 THEN way
+        WHEN z=10 THEN ST_Buffer(way,60)
+        WHEN z=09 THEN ST_Buffer(way,120)
+        WHEN z=08 THEN ST_Buffer(way,250)
+        WHEN z=07 THEN ST_Buffer(way,500)
+        WHEN z=06 THEN ST_Buffer(way,1e3)
+        WHEN z=05 THEN ST_Buffer(way,2e3)
+        WHEN z=04 THEN ST_Buffer(way,4e3)
+        ELSE NULL
+    END))) AS way
   FROM {{polygon.table_name}}
   WHERE ({{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
     'grass','grassland','meadow','forest','village_green','recreation_ground')
@@ -823,7 +829,9 @@ SELECT
 --  END) AS adm0_r,
   NULL AS adm0_l,NULL AS adm0_r,
   disputed,disputed_name,claimed_by,maritime,
-  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom) AS geom
+  ST_SimplifyPreserveTopology(
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom),
+  10) AS geom
 FROM pre_country
 GROUP BY(admin_level,disputed,disputed_name,claimed_by,maritime);
 $$
@@ -1019,7 +1027,9 @@ SELECT
   max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
-  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
+  ST_SimplifyPreserveTopology(
+    ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)),
+  15) AS geom
 FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
 GROUP BY(class,subclass);
 $$
@@ -1047,7 +1057,9 @@ SELECT
   NULL AS brunnel,
   (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
   max(indoor) AS indoor,
-  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
+  ST_SimplifyPreserveTopology(
+    ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)),
+  15) AS geom
 FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
 WHERE ref IS NOT NULL AND (
   (z<=09 AND class IN ('motorway')) -- at z<=09, only show motorway refs
@@ -1666,7 +1678,9 @@ SELECT
     array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
   class,intermittent,brunnel,
-  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
+  ST_SimplifyPreserveTopology(
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
+  10) AS geom
 FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
 GROUP BY (class,intermittent,brunnel);
 $$

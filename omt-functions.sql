@@ -559,8 +559,8 @@ FROM (SELECT
         WHEN z=08 THEN ST_Buffer(way,250)
         WHEN z=07 THEN ST_Buffer(way,500)
         WHEN z=06 THEN ST_Buffer(way,1e3)
-        WHEN z=05 THEN ST_Buffer(way,2e3)
-        WHEN z=04 THEN ST_Buffer(way,4e3)
+        WHEN z=05 THEN ST_Buffer(way,1e3)
+        WHEN z=04 THEN ST_Buffer(way,1e3)
         ELSE NULL
     END))) AS way
   FROM {{polygon.table_name}}

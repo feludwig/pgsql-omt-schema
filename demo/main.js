@@ -357,6 +357,7 @@ function switch_style_over(tgt_index) {
 
 function add_name_controls() {
   var all_name_selectors=document.querySelectorAll('input[id^=rad_]');
+  document.querySelector('input[id=rad_local]').checked=true;
   all_name_selectors.forEach((e)=>{
     e.onchange=(ev)=>{
       all_name_selectors.forEach((r)=>{r.disabled=true});

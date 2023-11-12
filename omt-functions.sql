@@ -1872,7 +1872,8 @@ WHERE class IN ('ocean','lake','sea') AND name IS NOT NULL;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry, z integer)
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_post_agg_water(bounds_geom geometry, z integer)
 RETURNS setof {{omt_typ_pref}}_water
 AS $$
 SELECT
@@ -1888,6 +1889,31 @@ FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
 GROUP BY (class,intermittent,brunnel);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry, z integer)
+RETURNS setof {{omt_typ_pref}}_water
+AS $$
+BEGIN
+{% for first_line,water_tabl in (
+  ('IF z<=07 THEN','simplified_water_polygons'),
+  ('ELSE','water_polygons')) %}
+{{first_line}}
+-- simplified_water_polygons where z<=07, water_polygons else => class="ocean"
+  RETURN QUERY
+    SELECT * FROM {{omt_func_pref}}_post_agg_water(bounds_geom,z)
+    UNION
+    SELECT
+    {% if with_osm_id %} 'wt_polygs' AS osm_id, {% endif %}
+      'ocean' AS class,0 AS intermittent,
+      NULL AS brunnel,ST_AsMVTGeom(way,bounds_geom) AS geom
+    FROM {{water_tabl}}
+    WHERE ST_Intersects(way,bounds_geom);
+{% endfor %}
+END IF;
+END;
+$$
+LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
+
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_collect_all(z integer, x integer, y integer)
 RETURNS table(mvt bytea,name text,rowcount bigint)

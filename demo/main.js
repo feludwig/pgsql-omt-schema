@@ -27,13 +27,14 @@ function enable_cycle_routes() {
       } else {
         document.map.addLayer(l);
       }
+      document.map.setLayoutProperty(l.id,'visibility','none');
       layer_ids.push(l.id);
     });
   });
   //enable cyclecheckbox
   var chb=document.querySelector('#cyclecheckbox');
   chb.disabled=false;
-  chb.checked=true;
+  chb.checked=false;
   chb.onchange=function (e) {
     console.log(e);
     var setVis='none';
@@ -197,20 +198,45 @@ function replace_recursive_prop(subject,source,target) {
     return target;
   } else if (typeof(subject)=='number'||typeof(subject)=='boolean') {
     return subject;
-  } else if (typeof(subject)=='string') {
+  } else if (typeof(subject)=='string' && typeof(target)=='string') {
     return subject.replaceAll(source,target);
   } else if (Array.isArray(subject)) {
     return subject.map((i)=>replace_recursive_prop(i,source,target));
+  } else if (typeof(subject)=='object') {
+    Object.keys(subject).forEach(k=>{
+      subject[k]=replace_recursive_prop(subject[k],source,target);
+    });
+    return subject;
+  //} else {
+  } else if (typeof(subject)=='string' && typeof(target)!='string' && typeof(source)=='string') {
+    // example subject='dc.sr.tsr.t', source='.' and target=['get','name']
+    var as_list=subject.split(source);
+    // -> ['dc','sr','tsr','t']
+    if (as_list.length==1) {
+      return subject; // nothin in there to replace
+    }
+    return as_list.reduce((accu,item,ix)=>{
+      if (ix==0) {
+        // no target in here
+        if (item=='') {
+          return [...accu];
+        }
+        return [...accu,item];
+      } else {
+        if (item=='') {
+          return [...accu,target];
+        }
+        return [...accu,target,item];
+      }
+    },['concat']);
+    // -> ['concat','dc',['get','name'],'sr',['get','name'],'tsr',['get','name'],'t']
   }
-  Object.keys(subject).forEach(k=>{
-    subject[k]=replace_recursive_prop(subject[k],source,target);
-  });
   return subject;
 }
 
 function set_name_property(lang) {
-  // go through style and change every occurence of "name:latin" to "name"
   if (lang==null) {
+    // go through style and change every occurence of "name:latin" to "name"
     var new_name=['get','name'];
   } else if (lang=='local') {
     var new_name=['get','name'];
@@ -222,18 +248,16 @@ function set_name_property(lang) {
       //console.log(l.id,'orig=',JSON.stringify(l.layout['text-field']));
       var in_prop=document.map.getLayoutProperty(l.id,'text-field');
       if (lang==null) {
+        //console.log(l.id,in_prop,JSON.stringify(in_prop));
         // cannonicalize
-        var new_prop=replace_recursive_prop(in_prop,'{name:latin}',
-          ['get','name:latin']);
-        var new_prop=replace_recursive_prop(in_prop,'{name:latin}\n{name:nonlatin}',
-          ['concat',['get','name:latin'],'\n',['get','name:nonlatin']]);
-        new_prop=replace_recursive_prop(new_prop,['get','name:latin'],new_name);
+        var new_prop2=replace_recursive_prop(in_prop,'{name:nonlatin}',['get','name:nonlatin']);
+        var new_prop=replace_recursive_prop(new_prop2,'{name:latin}',new_name);
+        //console.log(l.id,new_prop,JSON.stringify(new_prop));
       } else if (lang=='local') {
         var new_prop=replace_recursive_prop(in_prop,document.current_name,new_name);
       } else {
         var new_prop=replace_recursive_prop(in_prop,document.current_name,new_name);
       }
-      //console.log('new=',JSON.stringify(new_prop));
       document.map.setLayoutProperty(l.id,'text-field',new_prop);
     }
   });
@@ -370,6 +394,8 @@ function main() {
     document.querySelector('p#loading').innerHTML=displ_msg;
     alert(displ_msg);
   }
+  document.map.addControl(new maplibregl.ScaleControl({ maxWidth: 250, unit: 'metric' }));
+
   document.map.once('load',function() {
     set_name_property();
     add_name_controls();

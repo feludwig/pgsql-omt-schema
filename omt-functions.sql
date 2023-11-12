@@ -44,12 +44,8 @@
 -- TODO:
 --  *move all table names to templated table names
 --  * boundary: read from matview country_boundaries
---  * transportation separate transportation_name layer earlier, in the aggregation phase
---    - DONE, and: optimize transportation and transportation_name separately
---    -> transportation_name st_tilenmerge don't care aboud directions of lines
---    -> same ides: minimum tolerance for st_collectoverlapping ? to join the
+--  * transportation minimum tolerance for st_collectoverlapping ? to join the
 --        two lanes of motorways into one at z<10
---  * transportation FROM planet_osm_point (and transportation_name)-> put into pre_agg_
 --  * think about natural earth data: for now it works without... but
 --    lowzooms are horribly unusable
 
@@ -97,8 +93,9 @@ CREATE TYPE {{omt_typ_pref}}_transportation AS (
   access boolean,
   toll int,
   expressway int,
-  --EXTENSION:
+{% if transportation_with_cycleway %}
   cycleway int,
+{% endif %}
   layer int,
   level text,
   indoor int,
@@ -129,6 +126,7 @@ CREATE TYPE {{omt_typ_pref}}_transportation_name AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_transportation_merged AS (
+  tablefrom text,
 {% if with_osm_id %} osm_id text, {% endif %}
   name text,
   {{name_columns_typ}}
@@ -143,8 +141,10 @@ CREATE TYPE {{omt_typ_pref}}_transportation_merged AS (
   access boolean,
   toll int,
   expressway int,
+{% if transportation_with_cycleway %}
   --EXTENSION:
   cycleway int,
+{% endif %}
   layer int,
   level text,
   indoor int,
@@ -861,24 +861,25 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_agg_transportation_merged(
     bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation_merged
 AS $$
-SELECT
+SELECT tablefrom,
 {% if with_osm_id %} osm_id, {% endif %}
   name, {{name_columns_run}} ref,class,
   (CASE WHEN class IN ('bicycle_route') THEN network
     ELSE subclass END) AS subclass,
   network,brunnel,oneway,ramp,
-  service,access,toll,expressway,cycleway,layer,level,
+  service,access,toll,expressway,
+  {% if transportation_with_cycleway %} cycleway, {% endif %}
+  layer,level,
   indoor,bicycle,foot,horse,mtb_scale,surface,
   geom
 FROM (
   SELECT
+    'line' AS tablefrom,
 {% if with_osm_id %}
   (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
     WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
 {% endif %}
-    {{line.tags}},
-    {{line.name}},
-    {{line.ref}},
+    {{line.tags}},{{line.name}},{{line.ref}},
   -- from https://github.com/ClearTables/ClearTables/blob/master/transportation.lua
     (CASE
       WHEN {{line.highway_v}} = 'construction' THEN (CASE
@@ -896,11 +897,10 @@ FROM (
       WHEN {{line.highway_v}} IN ('unclassified','residential','living_street') THEN 'minor'||(
         CASE WHEN {{line.construction_e}}
         AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
-      WHEN {{line.highway_v}} IN ('road') THEN 'unknown'
+      WHEN {{line.highway_v}} IN ('road') OR {{line.route_v}} IN ('road') THEN 'unknown'
       WHEN {{line.highway_v}} IN ('motorway_link','trunk_link','primary_link','secondary_link','tertiary_link')
         THEN substring({{line.highway_v}},'([a-z]+)')
       WHEN {{line.route_v}} IN ('bicycle') THEN 'bicycle_route' --NOTE:extension
-      --WHEN {{line.highway_v}} IN ('cycleway') THEN 'bicycle_route' -- NOTE:extension, MOVE cycleway->path here
       WHEN {{line.highway_v}} IN ('cycleway','path','pedestrian','footway','steps') THEN 'path'||(
         CASE WHEN {{line.construction_v}} IS NOT NULL
         AND {{line.construction_v}} !='no' THEN '_construction' ELSE '' END)
@@ -910,6 +910,10 @@ FROM (
       WHEN {{line.aerialway_e}} THEN 'aerialway'
       WHEN {{line.shipway_e}} THEN {{line.shipway_v}}
       WHEN {{line.man_made_e}} THEN {{line.man_made_v}}
+      WHEN {{line.public_transport_e}} THEN {{line.public_transport_v}}
+      WHEN {{line.route_v}} IN ('ferry') THEN 'ferry'
+      WHEN {{line.route_v}} IN ('hiking') THEN 'path'
+      WHEN {{line.service_v}} IN ('driveway','parking_aisle') THEN 'service'
     END) AS class,
     (CASE
       WHEN {{line.railway_e}} THEN {{line.railway_v}}
@@ -917,6 +921,9 @@ FROM (
         THEN {{line.public_transport_v}}
       WHEN {{line.highway_e}} THEN {{line.highway_v}}
       WHEN {{line.aerialway_e}} THEN {{line.aerialway_v}}
+      WHEN {{line.man_made_e}} THEN {{line.man_made_v}}
+      WHEN {{line.route_e}} THEN {{line.route_v}}
+      WHEN {{line.service_e}} THEN {{line.service_v}}
     END) AS subclass,
     (CASE WHEN {{line.route_v}} IN ('bicycle') THEN
       (CASE {{line.network_v}} WHEN 'icn' THEN 'international'
@@ -926,7 +933,8 @@ FROM (
       END) --NOTE:extension
       ELSE NULLIF({{line.network_v}},'') END) AS network,
     (CASE
-      WHEN {{line.bridge_v}} IS NOT NULL AND {{line.bridge_v}}!='no' THEN 'bridge'
+      WHEN ({{line.bridge_v}} IS NOT NULL AND {{line.bridge_v}}!='no')
+        OR {{line.man_made_v}}='bridge' THEN 'bridge'
       WHEN {{line.tunnel_v}} IS NOT NULL AND {{line.tunnel_v}}!='no' THEN 'tunnel'
       WHEN {{line.ford_v}} IS NOT NULL AND {{line.ford_v}}!='no' THEN 'ford'
     END) AS brunnel,
@@ -952,10 +960,12 @@ FROM (
       WHEN {{line.expressway_v}} IN ('yes') THEN 1
       ELSE NULL
     END) AS expressway,
+{% if transportation_with_cycleway %}
     (CASE WHEN {{line.bicycle_v}} IN ('yes','1','designated','permissive') THEN 1
       WHEN {{line.bicycle_v}} IN ('no','dismount') THEN 0 ELSE NULL
       --TODO: why not tags->'cycleway' &+ tags->'cycleway:left' and tags->'cycleway:right' ?
     END) AS cycleway, --NOTE: extension
+{% endif %}
     {{line.layer}},
     {{line.level}},
     (CASE WHEN {{line.indoor_v}} IN ('yes','1') THEN 1 END) AS indoor,
@@ -972,7 +982,6 @@ FROM (
         'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
     END) AS surface,
     ST_AsMVTGeom({{line.way_v}},bounds_geom) AS geom
-    -- TODO: should we use planet_osm_roads ? and planet_osm_polygon nad planet_osm_point ? INCOMPLETE!
   FROM {{line.table_name}}
   WHERE (
     {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
@@ -988,8 +997,155 @@ FROM (
       'tertiary','road','secondary')
     OR {{line.aerialway_v}} IN ('chair_lift','drag_lift','platter','t-bar','gondola','cable_bar',
       'j-bar','mixed_lift')
+    OR {{line.route_v}} IN ('ferry','road','hiking')
+    OR {{line.public_transport_v}} IN ('platform')
+    OR {{line.man_made_v}} IN ('pier')
+    OR {{line.service_v}} IN ('driveway','parking_aisle')
     OR {{line.route_v}} IN ('bicycle') --NOTE:extension
-  ) AND ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
+  ) AND ST_Intersects({{line.way_v}},bounds_geom)
+  UNION SELECT
+    'polygon' AS tablefrom,
+{% if with_osm_id %}
+  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
+    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
+{% endif %}
+    {{polygon.tags}},{{polygon.name}},{{polygon.ref}},
+    (CASE
+      WHEN {{polygon.highway_v}} IN ('cycleway','path','pedestrian','footway','steps','bridleway','corridor')
+        THEN 'path'||(CASE
+          WHEN {{polygon.construction_v}} IS NOT NULL
+          AND {{polygon.construction_v}} !='no' THEN '_construction' ELSE '' END)
+        -- WARNING: nonstandard, or rather undefined behaviour: class="pier", "bridge" undocumented
+        --    used in osm-bright style, id="road_area_pier" and id="road_area_bridge"...
+      WHEN {{polygon.man_made_e}} THEN {{polygon.man_made_v}}
+      WHEN {{polygon.public_transport_v}} IN ('platform') THEN 'path'
+    END) AS class,
+    (CASE
+      WHEN {{polygon.public_transport_e}} AND {{polygon.public_transport_v}}!=''
+        THEN {{polygon.public_transport_v}}
+      WHEN {{polygon.highway_e}} THEN {{polygon.highway_v}}
+      WHEN {{polygon.man_made_e}} THEN {{polygon.man_made_v}}
+    END) AS subclass,
+    NULLIF({{polygon.network_v}},'') AS network,
+    (CASE
+      WHEN ({{polygon.bridge_v}} IS NOT NULL AND {{polygon.bridge_v}}!='no')
+        OR {{polygon.man_made_v}}='bridge' THEN 'bridge'
+      WHEN {{polygon.tunnel_v}} IS NOT NULL AND {{polygon.tunnel_v}}!='no' THEN 'tunnel'
+      WHEN {{polygon.ford_v}} IS NOT NULL AND {{polygon.ford_v}}!='no' THEN 'ford'
+    END) AS brunnel,
+    (CASE
+      WHEN {{polygon.oneway_v}} IN ('no') THEN 0
+      WHEN {{polygon.oneway_v}} IN ('-1') THEN -1
+      WHEN {{polygon.oneway_v}} IS NOT NULL THEN 1
+      ELSE NULL
+    END) AS oneway,
+    (CASE
+      WHEN {{polygon.ramp_v}} IN ('no','separate') THEN 0
+      WHEN {{polygon.ramp_v}} IN ('yes') THEN 1
+      ELSE NULL
+    END) AS ramp,
+    NULLIF({{polygon.service_v}},'') AS service,
+    CASE WHEN access IN ('no','private') THEN false ELSE NULL END AS access,
+    (CASE
+      WHEN {{polygon.toll_v}} IN ('no') THEN 0
+      WHEN {{polygon.toll_e}} THEN 1
+      ELSE NULL
+    END) AS toll,
+    (CASE
+      WHEN {{polygon.expressway_v}} IN ('yes') THEN 1
+      ELSE NULL
+    END) AS expressway,
+{% if transportation_with_cycleway %}
+    (CASE WHEN {{polygon.bicycle_v}} IN ('yes','1','designated','permissive') THEN 1
+      WHEN {{polygon.bicycle_v}} IN ('no','dismount') THEN 0 ELSE NULL
+    END) AS cycleway, --NOTE: extension
+{% endif %}
+    {{polygon.layer}},
+    {{polygon.level}},
+    (CASE WHEN {{polygon.indoor_v}} IN ('yes','1') THEN 1 END) AS indoor,
+    -- also CHECK tracktypes! in style they look like asphalt roads
+    NULLIF({{polygon.bicycle_v}},'') AS bicycle,
+    NULLIF({{polygon.foot_v}},'') AS foot,
+    NULLIF({{polygon.horse_v}},'') AS horse,
+    NULLIF({{polygon.mtb_scale_v}},'') AS mtb_scale,
+    (CASE WHEN {{polygon.surface_v}} IN ('paved','asphalt','cobblestone','concrete',
+        'concrete:lanes','concrete:plates','metal','paving_stones','sett',
+        'unhewn_cobblestone','wood') THEN 'paved'
+      WHEN {{polygon.surface_v}} IN ('unpaved','compacted','dirt','earth','fine_gravel',
+        'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
+        'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
+    END) AS surface,
+    ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+  FROM {{polygon.table_name}}
+  WHERE (
+    {{polygon.man_made_v}} IN ('bridge','pier')
+    OR {{polygon.public_transport_v}} IN ('platform')
+    OR {{polygon.highway_v}} IN ('path','cycleway','bridleway','footway','corridor','pedestrian','steps')
+  ) AND ST_Intersects({{polygon.way_v}},bounds_geom)
+  UNION SELECT
+    'point' AS tablefrom,
+{% if with_osm_id %}
+  (CASE WHEN {{point.osm_id_v}}<0 THEN 'r'||(-{{point.osm_id_v}})
+    WHEN {{point.osm_id_v}}>0 THEN 'w'||{{point.osm_id_v}} END) AS osm_id,
+{% endif %}
+    {{point.tags}},{{point.name}},{{point.ref}},
+    (CASE
+      WHEN {{point.highway_v}} IN ('motorway_junction') THEN 'motorway'
+    END) AS class,
+    {{point.highway_v}} AS subclass,
+    NULLIF({{point.network_v}},'') AS network,
+    (CASE
+      WHEN ({{point.bridge_v}} IS NOT NULL AND {{point.bridge_v}}!='no')
+        OR {{point.man_made_v}}='bridge' THEN 'bridge'
+      WHEN {{point.tunnel_v}} IS NOT NULL AND {{point.tunnel_v}}!='no' THEN 'tunnel'
+      WHEN {{point.ford_v}} IS NOT NULL AND {{point.ford_v}}!='no' THEN 'ford'
+    END) AS brunnel,
+    (CASE
+      WHEN {{point.oneway_v}} IN ('no') THEN 0
+      WHEN {{point.oneway_v}} IN ('-1') THEN -1
+      WHEN {{point.oneway_v}} IS NOT NULL THEN 1
+      ELSE NULL
+    END) AS oneway,
+    (CASE
+      WHEN {{point.ramp_v}} IN ('no','separate') THEN 0
+      WHEN {{point.ramp_v}} IN ('yes') THEN 1
+      ELSE NULL
+    END) AS ramp,
+    NULLIF({{point.service_v}},'') AS service,
+    CASE WHEN access IN ('no','private') THEN false ELSE NULL END AS access,
+    (CASE
+      WHEN {{point.toll_v}} IN ('no') THEN 0
+      WHEN {{point.toll_e}} THEN 1
+      ELSE NULL
+    END) AS toll,
+    (CASE
+      WHEN {{point.expressway_v}} IN ('yes') THEN 1
+      ELSE NULL
+    END) AS expressway,
+{% if transportation_with_cycleway %}
+    (CASE WHEN {{point.bicycle_v}} IN ('yes','1','designated','permissive') THEN 1
+      WHEN {{point.bicycle_v}} IN ('no','dismount') THEN 0 ELSE NULL
+    END) AS cycleway, --NOTE: extension
+{% endif %}
+    {{point.layer}},
+    {{point.level}},
+    (CASE WHEN {{point.indoor_v}} IN ('yes','1') THEN 1 END) AS indoor,
+    -- also CHECK tracktypes! in style they look like asphalt roads
+    NULLIF({{point.bicycle_v}},'') AS bicycle,
+    NULLIF({{point.foot_v}},'') AS foot,
+    NULLIF({{point.horse_v}},'') AS horse,
+    NULLIF({{point.mtb_scale_v}},'') AS mtb_scale,
+    (CASE WHEN {{point.surface_v}} IN ('paved','asphalt','cobblestone','concrete',
+        'concrete:lanes','concrete:plates','metal','paving_stones','sett',
+        'unhewn_cobblestone','wood') THEN 'paved'
+      WHEN {{point.surface_v}} IN ('unpaved','compacted','dirt','earth','fine_gravel',
+        'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
+        'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
+    END) AS surface,
+    ST_AsMVTGeom({{point.way_v}},bounds_geom) AS geom
+  FROM {{point.table_name}}
+  WHERE {{point.highway_v}} IN ('motorway_junction') AND ST_Intersects({{point.way_v}},bounds_geom)
+) AS unfiltered_zoom
 WHERE (
      (z>=12 AND class IS NOT NULL) -- take everything
   OR (z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
@@ -1013,6 +1169,16 @@ AS $$
 -- motivation: merge more columns together, because at z>=10 names of
 -- roads are not shown anyways, nor bridges etc...
 -- delete/disregard brunnels+layer
+WITH aa AS (
+    SELECT * FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)),
+  aa_line AS (SELECT * FROM aa WHERE tablefrom='line'),
+  aa_rest AS (SELECT * FROM aa WHERE tablefrom!='line')
+{% for cte_name,geom_agg_run in (
+  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2))'),
+  ('aa_rest','ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom)))')) %}
+{% if loop.index>1 %} --indexing starts at 1
+  UNION --separator between loops
+{% endif %}
 SELECT
 {% if with_osm_id %}
     array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
@@ -1022,16 +1188,17 @@ SELECT
   (array_agg(DISTINCT oneway))[1] AS oneway,min(ramp) AS ramp,
   (array_agg(DISTINCT service))[1] AS service,
   (array_agg(DISTINCT access))[1] AS access,max(toll) AS toll,
-  max(expressway) AS expressway,max(cycleway) AS cycleway,
+  max(expressway) AS expressway,
+  {% if transportation_with_cycleway %} max(cycleway) AS cycleway, {% endif %}
   NULL::int AS layer,(array_agg(DISTINCT level))[1] AS level,
   max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
-  ST_SimplifyPreserveTopology(
-    ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)),
-  15) AS geom
-FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
-GROUP BY(class,subclass);
+  ST_SimplifyPreserveTopology({{geom_agg_run}},15) AS geom
+FROM {{cte_name}}
+GROUP BY(class,subclass)
+{% endfor %}
+;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1041,6 +1208,16 @@ RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
 -- motivation: merge more columns together, see transportation_z_low_10
 -- and name not shown anymore, since z<13
+WITH aa AS (
+    SELECT * FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)),
+  aa_line AS (SELECT * FROM aa WHERE tablefrom='line'),
+  aa_rest AS (SELECT * FROM aa WHERE tablefrom!='line')
+{% for cte_name,geom_agg_run in (
+  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2))'),
+  ('aa_rest','ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom)))')) %}
+{% if loop.index>1 %} --indexing starts at 1
+  UNION --separator between loops
+{% endif %}
 SELECT
 {% if with_osm_id %}
 {% if transportation_aggregate_osm_id_reduce %}
@@ -1057,14 +1234,14 @@ SELECT
   NULL AS brunnel,
   (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
   max(indoor) AS indoor,
-  ST_SimplifyPreserveTopology(
-    ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)),
-  15) AS geom
-FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
+  ST_SimplifyPreserveTopology({{geom_agg_run}},15) AS geom
+FROM {{cte_name}}
 WHERE ref IS NOT NULL AND (
   (z<=09 AND class IN ('motorway')) -- at z<=09, only show motorway refs
   OR (z>09 AND z<=10 AND class IN ('motorway','primary','trunk')))
-GROUP BY(class,subclass,ref);
+GROUP BY(class,subclass,ref)
+{% endfor %}
+;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1072,6 +1249,16 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_highz(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation
 AS $$
+WITH aa AS (
+    SELECT * FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)),
+  aa_line AS (SELECT * FROM aa WHERE tablefrom='line'),
+  aa_rest AS (SELECT * FROM aa WHERE tablefrom!='line')
+{% for cte_name,geom_agg_run in (
+  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2))'),
+  ('aa_rest','ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom)))')) %}
+{% if loop.index>1 %} --indexing starts at 1
+  UNION --separator between loops
+{% endif %}
 SELECT
 {% if with_osm_id %}
   --LIMIT 5 but that's a syntax error in an aggregate
@@ -1081,13 +1268,13 @@ SELECT
   (array_agg(DISTINCT network))[1] AS network,brunnel,
   oneway,min(ramp) AS ramp,(array_agg(DISTINCT service))[1] AS service,
   access,max(toll) AS toll,max(expressway) AS expressway,
-  cycleway,
+  {% if transportation_with_cycleway %} cycleway, {% endif %}
   layer,(array_agg(DISTINCT level))[1] AS level,
   max(indoor) AS indoor,bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
-  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
-FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
+  {{geom_agg_run}} AS geom
+FROM {{cte_name}}
 -- deduce that a road MAY be candidate for merging if :
 --  same name, class and ref accross geometry features
 --  FILTER OUT bridge or tunnel segments (those will be rendered differently)
@@ -1097,7 +1284,11 @@ FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
 -- then do the merging with unnest(ST_ClusterIntersecting())::multigeometries
 -- ST_CollectionExtract(*,2) extracts only line features, ST_LineMerge then merges these
 --  multigeometries to single geometries
-GROUP BY(name,class,subclass,ref,brunnel,oneway,access,layer,cycleway,bicycle);
+GROUP BY(name,class,subclass,ref,brunnel,oneway,access,layer,
+  {% if transportation_with_cycleway %} cycleway, {% endif %}
+  bicycle)
+{% endfor %}
+;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1105,6 +1296,16 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_transportation_name_highz(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_transportation_name
 AS $$
+WITH aa AS (
+    SELECT * FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)),
+  aa_line AS (SELECT * FROM aa WHERE tablefrom='line'),
+  aa_rest AS (SELECT * FROM aa WHERE tablefrom!='line')
+{% for cte_name,geom_agg_run in (
+  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2))'),
+  ('aa_rest','ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom)))')) %}
+{% if loop.index>1 %} --indexing starts at 1
+  UNION --separator between loops
+{% endif %}
 SELECT
 {% if with_osm_id %}
 {% if transportation_aggregate_osm_id_reduce %}
@@ -1120,15 +1321,17 @@ SELECT
   class,subclass,(array_agg(DISTINCT brunnel))[1] AS brunnel,
   (array_agg(DISTINCT level))[1] AS level,max(layer) AS layer,
   max(indoor) AS indoor,
-  ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)) AS geom
-FROM {{omt_func_pref}}_pre_agg_transportation_merged(bounds_geom,z)
+  {{geom_agg_run}} AS geom
+FROM {{cte_name}}
 WHERE name IS NOT NULL OR ref IS NOT NULL
 -- deduce that a road MAY be candidate for merging if :
 --  same name, class and ref accross geometry features
 -- then do the merging with unnest(ST_ClusterIntersecting())::multigeometries
 -- ST_CollectionExtract(*,2) extracts only line features, ST_LineMerge then merges these
 --  multigeometries to single geometries
-GROUP BY(name,class,subclass,ref);
+GROUP BY(name,class,subclass,ref)
+{% endfor %}
+;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

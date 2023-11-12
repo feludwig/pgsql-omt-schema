@@ -164,6 +164,7 @@ aliases={
         'admin_centre_4':'admin_centre:4',
         'iso3166_1_alpha2':'ISO3166-1:alpha2',
         'iso3166_1':'ISO3166-1',
+        'mtb_scale':'mtb:scale',
     },
     'line':{
         'housenumber':'addr:housenumber',
@@ -180,6 +181,7 @@ aliases={
         'admin_centre_4':'admin_centre:4',
         'iso3166_1_alpha2':'ISO3166-1:alpha2',
         'iso3166_1':'ISO3166-1',
+        'mtb_scale':'mtb:scale',
     },
 }
 
@@ -194,7 +196,9 @@ need_columns={
         'ele', 'natural', 'ref', 'man_made', 'tower_type',
         'start_date', 'admin_centre_4', 'population',
         'iso3166_1_alpha2','iso3166_1','country_code_fips',
-        'capital', 'information',
+        'capital', 'information','network','surface','foot',
+        'horse','bicycle','toll','oneway','ramp','bridge',
+        'tunnel','ford','service','expressway','mtb_scale',
 
         'way', 'tags', 'osm_id',
     ),
@@ -226,6 +230,9 @@ need_columns={
         'wikipedia', 'admin_centre_4', 'population',
         'iso3166_1_alpha2','iso3166_1','country_code_fips',
         'capital', 'information','protection_title',
+        'construction','public_transport','network',
+        'oneway','ramp','service','toll','expressway',
+        'bicycle','foot','horse','mtb_scale','surface',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),
@@ -512,6 +519,8 @@ TEMPLATE_VARS={
     'omt_all_func':'public.omt_all',
     # name for the lake_centerlines loaded geojson data table (11MB size)
     'lake_table_name':'lake_centerline',
+    # whether to add the "cycleway" column to layer "transportation". experimental and not in omt spec
+    'transportation_with_cycleway':False,
 }
 if TEMPLATE_VARS['make_name_columns_function'] :
     # with comma the end

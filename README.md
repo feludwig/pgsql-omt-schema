@@ -56,6 +56,8 @@ This can all be summarized in a `.style` file for osm2pgsql; but applying it
 would require a reimport: not the point of this project. A description
 of all needed columns is in the [run.py](run.py) driver, `need_columns` and `aliases`.
 
+* Tables `water_polygons` and `simplified_water_polygons` exist and hold static data,
+  as imported for use in the rendering pipeline
 * Tables `*_point`, `*_line` and `*_polygon` exist,
  and you have these permissions:
   - `SELECT`,

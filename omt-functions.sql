@@ -736,104 +736,40 @@ RETURNS setof {{omt_typ_pref}}_boundary
 AS $$
 WITH pre_country AS (
   SELECT
-{% if with_osm_id %} osm_id, {% endif %}
-    admin_level,disputed,disputed_name,claimed_by,maritime,geom
+{% if with_osm_id %}
+    array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
+{% endif %}
+    admin_level,
+    NULL AS adm0_l,NULL AS adm0_r,
+    disputed,disputed_name,claimed_by,maritime,
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom) AS geom
   FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
---    -- this algorithm tries to find out the country name on the left and right sides
---    -- of the boundary.
---    -- TODO: slow performance, create a MATERIALIZED VIEW for the just-country ones ?
---    -- for querying then just SELECT from matview wherever admin_level<=2
---  ),
---  namesides AS (
---    -- TODO: this still fails with way 124997929
---    SELECT
---  {% if with_osm_id %} pre_country.osm_id AS osm_id, {% endif %}
---      -- the group by collapses row ordering. but we only want the highest-log_int_of_area
---      -- and highest-admin_level value first (eventually EXTENSION: described below, take multiple names
---      -- of the counrty first, then ||' '|| also the province name, ||' '|| county name etc..)
---      -- and we want ORDER BY(log_int_of_area) DESC, so flip it
---
---      -- for debugging the name-resolution :
---      --(array_to_string(array_agg(tosort_name||' lgia'||log_int_of_area::text ORDER BY (99-log_int_of_area)::text||tosort_name ASC),'/'))
---      substring((array_agg(tosort_name ORDER BY (99-log_int_of_area)::text||tosort_name ASC))[1],2)
---      AS name,
---      side,pre_country.admin_level,
---      pre_country.geom
---    FROM (
---      SELECT osm_id,tosort_name,side,area,
---        -- this log_int_of_area is an approximation of area:
---        -- if the left sided area is 50000 and the right is 50, approximate a GROUP BY(simplified_are)
---        -- where round(log(area)) is an appropriate choice: (left_area=53000,adm_l=2,name=abc) and
---        -- (left_area=61000,adm_l=4,name=def) will go toghether as lg_i_a=4
---        -- and actually be selected over (right_area=46,adm_l=1,name=ghi) or (right_area=123,...) with
---        -- lg_i_a=1.
---        -- TRY not to reach 100, log_int_of_area SHOULD <99! (was 10 and 9 but we can expand like this. now has ample headroom)
---        -- this is because above, the tosort_name is a ::text and is being sorted by.
---        -- because we generate log_int_of_area later, we actually sort by log_int_of_area||tosort_name.
---        (log(15.0,area::numeric)::int) AS log_int_of_area
---      FROM (
---        SELECT
---          pre_country.osm_id AS osm_id, --required osm_id for uniqueness
---          p.admin_level||p.name AS tosort_name,t.val AS side,
---          pre_country.admin_level,
---          -- st_buffer the line geometry to become a polygon, BUT only to left/right side
---          -- of itself. then measure area of overlap with some test boundary polygon.
---          -- if said polygon is on left side of line, the area for side='left' should be >0
---          -- and for side='right' should be =0.
---          -- but with real world data and complicated boundaries that have tight turns,
---          -- left and right may both be nonzero. see order by(log_int_of_area) below for that
---          ST_Area(ST_Intersection(p.way,
---              ST_Buffer(
---                -- below there is a pre_country.admin_level<=2 but just to be
---                -- sure, make NULL here as well
---                CASE WHEN pre_country.admin_level<=0 THEN pre_country.geom ELSE NULL END,
---                2.0,'side='||t.val))) AS area
---        FROM planet_osm_polygon AS p,
---          (VALUES ('left'),('right')) AS t(val),
---          pre_country
---        WHERE
---          p.way && bounds_geom
---          AND pre_country.admin_level<=2
---          AND ST_Intersects(p.way,pre_country.geom)
---          AND p.boundary='administrative' AND p.admin_level IS NOT NULL
---          AND p.admin_level IN ('1','2','3','4','5')
---        ) AS logless_area
---      WHERE area>0.001 --tolerance
---      -- TODO: we should just select the highest log_int_of_area: a GROUP BY(log_int_of_area) ?
---      -- this should enable showing left=Swtizerland/Katon aarau right=Germany/Baden württemberg
---      -- enhanced from the current left=Switzerland right=Germany...
---      ORDER BY
---        -- gather the same features together: ASSUMPTION is that
---        -- osm_id is a unique id: this is not the case... but it's a reasonable assumption because
---        -- the next best thing is to create a hash of the geometry: that's exprensive processing...
---        (logless_area.osm_id),
---        -- take (left_area=53000,adm_l=** 2 **,name=abc) over (left_area=61000,adm_l=** 4 **,name=def)
---        (logless_area.admin_level::integer) ASC,
---        side
---      ) AS deduced
---      JOIN pre_country ON pre_country.osm_id=deduced.osm_id
---  GROUP BY(pre_country.osm_id,deduced.side,pre_country.admin_level,pre_country.geom)
-  )
+  GROUP BY(admin_level,disputed,disputed_name,claimed_by,maritime)
+)
 SELECT
 {% if with_osm_id %}
-  array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
+  (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
+    WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
 {% endif %}
-  admin_level,
---  (CASE WHEN admin_level<=2
---    THEN (SELECT name FROM namesides WHERE side='left' AND pre_country.geom=geom LIMIT 1)
---    ELSE NULL
---  END) AS adm0_l,
---  (CASE WHEN admin_level<=2
---    THEN (SELECT name FROM namesides WHERE side='right' AND pre_country.geom=geom LIMIT 1)
---    ELSE NULL
---  END) AS adm0_r,
-  NULL AS adm0_l,NULL AS adm0_r,
-  disputed,disputed_name,claimed_by,maritime,
-  ST_SimplifyPreserveTopology(
-    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom),
-  10) AS geom
+  {{line.admin_level_v}}::integer AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
+  (CASE WHEN {{line.disputed_v}} IN ('yes') OR {{line.boundary_v}} IN ('disputed') THEN 1
+  END) AS disputed,
+  {{line.disputed_name}},
+  (CASE {{line.admin_level_v}} WHEN '2' THEN
+    COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},{{line.country_code_fips_v}})
+    ELSE NULL END) AS claimed_by,
+  (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
+  ST_SimplifyPreserveTopology(ST_AsMVTGeom({{line.way_v}},bounds_geom),10) AS geom
+FROM {{omt_view_pref}}_country_boundaries AS {{line.table_name}}
+WHERE ST_Intersects({{line.way_v}},bounds_geom)
+{% if False %}
+UNION
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+  admin_level,adm0_l,adm0_r,disputed,disputed_name,claimed_by,maritime,
+  ST_SimplifyPreserveTopology(geom,10) AS geom
 FROM pre_country
-GROUP BY(admin_level,disputed,disputed_name,claimed_by,maritime);
+{% endif %};
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1403,7 +1339,7 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_place(bounds_geom geometry,z intege
 RETURNS setof {{omt_typ_pref}}_place
 AS $$
 SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if with_osm_id %} osm_id||' s='||(score::text), {% endif %}
   name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
   (ntile(9) OVER (ORDER BY score DESC))::int+1 AS rank,
   ST_AsMVTGeom(way,bounds_geom) AS geom
@@ -1451,10 +1387,20 @@ FROM (
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place
     WHERE ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
-  WHERE (z>=12)
+  WHERE ((z>=12)
     OR (z>=10 AND z<12 AND {{omt_func_pref}}_get_place_multiplier(class)>3)
     OR (z>=07 AND z<10 AND {{omt_func_pref}}_get_place_multiplier(class)>6)
-    OR (z<07 AND {{omt_func_pref}}_get_place_multiplier(class)>7);
+    OR (z>=04 AND z<07 AND {{omt_func_pref}}_get_place_multiplier(class)>7)
+    OR (z>=02 AND z<04 AND {{omt_func_pref}}_get_place_multiplier(class)>9)
+    OR ({{omt_func_pref}}_get_place_multiplier(class)>10))
+  -- some cities are big enough to be shown above provinces. but weed out the small ones
+  AND (class!='city' OR (
+      -- zoom range implied from above 'city'==8 : 04<=z<07
+      (z>=7)
+      OR (z=6 AND score>1e6)
+      OR (z=5 AND score>2e6)
+      OR (z=4 AND score>3e6)
+    ));
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

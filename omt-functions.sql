@@ -577,7 +577,9 @@ FROM (SELECT
     (z=11 AND {{polygon.way_area_v}}>25e3) OR
     (z=10 AND {{polygon.way_area_v}}>130e3) OR
     (z=09 AND {{polygon.way_area_v}}>600e3) OR
-    (z>=04 AND {{polygon.way_area_v}}>2500e3)
+    (z=08 AND {{polygon.way_area_v}}>1e6) OR
+    (z=07 AND {{polygon.way_area_v}}>1.8e6) OR
+    (z>=04 AND {{polygon.way_area_v}}>2.5e6)
     -- show nothing at lower zooms
   )
   GROUP BY(subclass)
@@ -621,7 +623,9 @@ SELECT
 {% endif %}
   name,{{name_columns_aggregate_run}} class,
   (row_number() OVER (ORDER BY sum(way_area) DESC))::int AS rank,
-  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
+  ST_SimplifyPreserveTopology(
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
+   8) AS geom
 FROM (
   SELECT
   {% if with_osm_id %}

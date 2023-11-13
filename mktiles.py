@@ -82,7 +82,7 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
 
 
 class Writer(threading.Thread) :
-    def __init__(self,get_new_cursor:typing.Callable[[],psycopg2.extensions.cursor],func_name:str) :
+    def __init__(self,get_new_cursor:typing.Callable[[],psycopg2.extensions.cursor],func_name:str,with_landarea_stats=True) :
         threading.Thread.__init__(self)
         self.get_new_cursor=get_new_cursor
         self.c=self.get_new_cursor()
@@ -90,18 +90,39 @@ class Writer(threading.Thread) :
         self.func_name=func_name
         self.function_returns_stats=func_name.find('stats')>=0
         self.todo=queue.Queue(maxsize=0) #infinite size
+        self.with_landarea_stats=with_landarea_stats
     def set_zooms(self,zs) :
         self.total_written={z:0 for z in zs}
         self.total_count={z:0 for z in zs}
         self.per_layer_stats={z:{} for z in zs}
-    def add_layer_stats_line(self,z,line:dict) :
+    def add_layer_stats_line(self,z,line:dict,weight=-1.0) :
+        """ Where landarea_weight is the proportional land area
+        of the entire tile, eg. 5/18/10 is poland only land (no ocean): weight=1.0
+        and 5/15/10 is ireland+south UK weight=0.41
+        """
         ln=line['name']
         if ln not in self.per_layer_stats[z] :
-            self.per_layer_stats[z][ln]=[0]*4
-        self.per_layer_stats[z][ln][0]+=1
-        self.per_layer_stats[z][ln][1]+=line['pcent']
-        self.per_layer_stats[z][ln][2]+=line['bytes']
-        self.per_layer_stats[z][ln][3]+=line['rowcount']
+            self.per_layer_stats[z][ln]={'landarea':0.0,'count':0,'pcent':0.0,
+                    'bytes':0,'landarea_bytes':0.0,
+                    'rowcount':0,'landarea_rowcount':0.0}
+        self.per_layer_stats[z][ln]['count']+=1
+        self.per_layer_stats[z][ln]['pcent']+=float(line['pcent'])
+        self.per_layer_stats[z][ln]['bytes']+=line['bytes']
+        self.per_layer_stats[z][ln]['rowcount']+=line['rowcount']
+        if self.with_landarea_stats and weight>1e-5 :
+            self.per_layer_stats[z][ln]['landarea']+=weight
+            self.per_layer_stats[z][ln]['landarea_bytes']+=line['bytes']/weight
+            self.per_layer_stats[z][ln]['landarea_rowcount']+=line['rowcount']/weight
+
+    def get_land_area_pcent(self,z:str,x:str,y:str)->float :
+        water_tbl='water_polygons' if int(z)>8 else 'simplified_water_polygons'
+        q=f'''WITH a(a) AS (SELECT ST_TileEnvelope(%s,%s,%s))
+            SELECT 1.0-(sum(ST_Area(ST_Intersection(way,a.a)))/ST_Area(a.a))
+            FROM {water_tbl},a WHERE ST_Intersects(way,a.a) GROUP BY(a.a);'''
+        self.c.execute(self.c.mogrify(q,(z,x,y)))
+        if self.c.rowcount==0 :
+            return 1.0 #not even any intersection to water_polygons
+        return self.c.fetchone()[0]
 
     @classmethod
     def print_layer_stats(cls,c:psycopg2.extensions.cursor,list_of_self,z) :
@@ -111,23 +132,73 @@ class Writer(threading.Thread) :
             c.execute(c.mogrify('SELECT pg_size_pretty(%s::numeric);',(d,)))
             return c.fetchone()[0]
         per_layer_stats={}
+        w_l_a=list_of_self[0].with_landarea_stats
         #collect all data
+        total_z_count=0
+        total_z_landarea=0
+        total_z_bytes=0
         for i in list_of_self :
+            curr_landarea=0.0
             for k,v in i.per_layer_stats[z].items() :
                 if k not in per_layer_stats :
-                    per_layer_stats[k]=[0]*4
-                for ix in (0,1,2,3) :
-                    per_layer_stats[k][ix]+=v[ix]
+                    per_layer_stats[k]=[0.0]*7
+                for ix,field in enumerate(('landarea','count','pcent','bytes',
+                        'landarea_bytes','rowcount','landarea_rowcount')) :
+                    per_layer_stats[k][ix]+=v[field]
+                if w_l_a :
+                    curr_landarea=v['landarea']
+            total_z_bytes+=i.total_written[z]
+            total_z_count+=i.total_count[z]
+            total_z_landarea+=curr_landarea
         #sort
-        per_layer_stats_l=[(bytes,k,count,pcent,rowcount) for k,(count,pcent,bytes,rowcount) in per_layer_stats.items()]
-        per_layer_stats={k:(count,pcent,bytes,rowcount) for (bytes,k,count,pcent,rowcount) in sorted(per_layer_stats_l,reverse=True)}
+        if w_l_a :
+            per_layer_stats_l=[(landarea_bytes,k,landarea,count,pcent,bytes,rowcount,landarea_rowcount)
+                    for k,(landarea,count,pcent,bytes,landarea_bytes,rowcount,landarea_rowcount) in per_layer_stats.items()]
+            per_layer_stats={k:(landarea,count,pcent,bytes,landarea_bytes,rowcount,landarea_rowcount)
+                    for (landarea_bytes,k,landarea,count,pcent,bytes,rowcount,landarea_rowcount) in sorted(per_layer_stats_l,reverse=True)}
+            #prepare print
+            headers=['layer_name','avg_pcent','avg_landarea_bytes','avg_bytes','avg_landarea_rowcount','avg_rowcount']
+            data=[(k,
+                str(round(pcent/count,1)),
+                get_size_pretty(round(landarea_bytes/count,1)),
+                get_size_pretty(round(bytes/count,1)),
+                str(round(landarea_rowcount/count)),
+                str(round(rowcount/count)),
+                ) for k,(landarea,count,pcent,bytes,landarea_bytes,rowcount,landarea_rowcount) in per_layer_stats.items()]
+        else :
+            per_layer_stats_l=[(bytes,k,count,pcent,rowcount) for k,(count,pcent,bytes,rowcount) in per_layer_stats.items()]
+            per_layer_stats={k:(count,pcent,bytes,rowcount) for (bytes,k,count,pcent,rowcount) in sorted(per_layer_stats_l,reverse=True)}
+            #prepare print
+            headers=['layer_name','avg_pcent','avg_bytes','avg_rowcount']
+            data=[(k,
+                str(round(v[1]/v[0],1)),
+                get_size_pretty(round(v[2]/v[0],1)),str(round(v[3]/v[0])),
+                ) for k,v in per_layer_stats.items()]
+        p_insert=()
+        if total_z_count==0 :
+            print('ZeroDivisionError')
+            return
+        if w_l_a :
+            p_insert=('avg_landarea',round(100*total_z_landarea/total_z_count,1),'%')
         #print
-        headers=['layer_name','avg_pcent','avg_bytes','avg_rowcount']
-        data=[(k,
-            str(round(v[1]/v[0],1)),
-            get_size_pretty(round(v[2]/v[0],1)),str(round(v[3]/v[0])),
-            ) for k,v in per_layer_stats.items()]
+        print(f'z{z:02}',*p_insert,':')
         run.print_table(data,headers)
+
+        if total_z_count==0 :
+            per_tile_kb_size=0
+        else :
+            per_tile_kb_size=round(total_z_bytes/total_z_count*1e-3,2)
+        if total_z_landarea==0 :
+            per_landarea_tile_kb_size=0
+        else :
+            per_landarea_tile_kb_size=round(total_z_bytes/total_z_landarea*1e-3,2)
+        if w_l_a :
+            p_end=(per_landarea_tile_kb_size,'KB/landarea_tile,',
+                total_z_count,'tiles',round(total_z_landarea,1),'landarea_tiles')
+        else :
+            p_end=(total_z_count,'tiles')
+        print('total',round(total_z_bytes*1e-6,2),'MB, average',
+                per_tile_kb_size,'KB/tile,',*p_end)
 
 
     def run(self) :
@@ -174,12 +245,15 @@ class Writer(threading.Thread) :
             return
         result=[dict(zip([col.name for col in self.c.description],i)) for i in self.c.fetchall()]
 
+        weight=1.0
+        if self.with_landarea_stats :
+            weight=self.get_land_area_pcent(z,x,y)
         if self.function_returns_stats :
             for line in result :
                 if line['name']=='ALL' :
                     out_data=line['data']
                 else :
-                    self.add_layer_stats_line(z,line)
+                    self.add_layer_stats_line(z,line,weight)
         else :
             out_data=list(result[0].values())[0]
 
@@ -208,7 +282,7 @@ if '--contours' in more :
     func_name='contours_vector'
 
 
-ts=[Writer(make_new_connection_cursor,func_name) for i in range(30)]
+ts=[Writer(make_new_connection_cursor,func_name,with_landarea_stats=False) for i in range(30)]
 
 start=time.time()
 
@@ -229,15 +303,7 @@ total_z_bytes={z:sum(t.total_written[z] for t in ts) for z in encountered_zooms}
 total_bytes=sum([v for z,v in total_z_bytes.items()])
 total_z_count={z:sum(t.total_count[z] for t in ts) for z in encountered_zooms}
 print(total_z_count)
-total_count=sum(total_z_count.values())
 print(round(total_bytes*1e-6,2),'MB total written')
 for z in encountered_zooms :
-    print(f'z{z:02}:')
     Writer.print_layer_stats(make_new_connection_cursor(),ts,z)
-    if total_z_count[z]==0 :
-        per_tile_kb_size=0
-    else :
-        per_tile_kb_size=round(total_z_bytes[z]/total_z_count[z]*1e-3,2)
-    print('total',round(total_z_bytes[z]*1e-6,2),'MB, average',
-            per_tile_kb_size,'KB/tile,',total_z_count[z],'tiles')
 print(round(time.time()-start,1),'seconds')

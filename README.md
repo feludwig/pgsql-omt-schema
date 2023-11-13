@@ -81,9 +81,10 @@ the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 
 Zoom range|Server usability|Client usability
 ---|---|---
-0-3|only `mktiles.py`: `pg_tileserv` IO errors|unusable, easily surpasses 10MB/tile.
-4-5|only `mktiles.py`, multiple minutes/tile at least|usually above 1MB/tile but can be looked at with patience
-6-10|highly recommend file caching, `mktiles.py` or `pg_tileserv`, multiple seconds/tile|rendering is long because of tilesize ~ 200 to 2500 KB/tile
+0-3|only `mktiles.py`: `pg_tileserv` IO errors|sometimes reaches 10MB/tile.
+4-5|only `mktiles.py`, multiple minutes/tile at least|around 1MB/tile but can be looked at with patience
+7|highly recommend file caching, `mktiles.py` or `pg_tileserv`, multiple minutes/tile|rendering is long because of tilesize ~ 400 to 1500 KB/tile
+6,8-10|recommend file caching because multiple seconds/minutes to render|rendering is responsive, <500KB/tile usually
 11-15|live serving possible, size is usually <500KB/tile mapbox recommendation|rendering is responsive
 16-22|no work to do|excellent: no need for network once z15 visited
 

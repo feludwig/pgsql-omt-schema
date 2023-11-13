@@ -879,9 +879,12 @@ FROM (
       WHEN {{line.ford_v}} IS NOT NULL AND {{line.ford_v}}!='no' THEN 'ford'
     END) AS brunnel,
     (CASE
-      WHEN {{line.oneway_v}} IN ('no') THEN 0
+        -- instead of 0 because no one checks ==0 nor !=0, just ==1 or ==-1. NULL then can
+        -- aggregate with all other oneway==NULLs
+      WHEN {{line.oneway_v}} IN ('no') THEN NULL
       WHEN {{line.oneway_v}} IN ('-1') THEN -1
       WHEN {{line.oneway_v}} IS NOT NULL THEN 1
+      WHEN {{line.oneway_v}} IN ('alternating') THEN 2
       ELSE NULL
     END) AS oneway,
     (CASE
@@ -974,9 +977,11 @@ FROM (
       WHEN {{polygon.ford_v}} IS NOT NULL AND {{polygon.ford_v}}!='no' THEN 'ford'
     END) AS brunnel,
     (CASE
-      WHEN {{polygon.oneway_v}} IN ('no') THEN 0
+      -- see line table above
+      WHEN {{polygon.oneway_v}} IN ('no') THEN NULL
       WHEN {{polygon.oneway_v}} IN ('-1') THEN -1
       WHEN {{polygon.oneway_v}} IS NOT NULL THEN 1
+      WHEN {{polygon.oneway_v}} IN ('alternating') THEN 2
       ELSE NULL
     END) AS oneway,
     (CASE
@@ -1041,9 +1046,11 @@ FROM (
       WHEN {{point.ford_v}} IS NOT NULL AND {{point.ford_v}}!='no' THEN 'ford'
     END) AS brunnel,
     (CASE
-      WHEN {{point.oneway_v}} IN ('no') THEN 0
+      --see line above
+      WHEN {{point.oneway_v}} IN ('no') THEN NULL
       WHEN {{point.oneway_v}} IN ('-1') THEN -1
       WHEN {{point.oneway_v}} IS NOT NULL THEN 1
+      WHEN {{point.oneway_v}} IN ('alternating') THEN 2
       ELSE NULL
     END) AS oneway,
     (CASE

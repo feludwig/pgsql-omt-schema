@@ -1338,21 +1338,16 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_place(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_place
 AS $$
-SELECT
-{% if with_osm_id %} osm_id||' s='||(score::text), {% endif %}
-  name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
-  (ntile(9) OVER (ORDER BY score DESC))::int+1 AS rank,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM (
+WITH place_toomuch_cities AS (
   SELECT
 {% if with_osm_id %} (CASE
       WHEN tablefrom='point' THEN 'n'||osm_id
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
       WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
     END) AS osm_id, {% endif %}
-    name,{{name_columns_run}} admin_level::integer AS capital,place AS class,iso_a2,
+    name,{{name_columns_run}} admin_level::integer AS capital,class,iso_a2,
     -- 1e3*1.9^(mlt^1.08)
-    ((power(1.9,power({{omt_func_pref}}_get_place_multiplier(place),1.08))::int*1e3)+
+    ((power(1.9,power({{omt_func_pref}}_get_place_multiplier(class),1.08))::int*1e3)+
       --sqlglot does not like implicit a*b+c*d, instead (a*b)+(c*d)
       (capital_score*3e6)+(province_score*2e6)+coalesce(population,0)) AS score,
     (CASE WHEN tablefrom='point' THEN way
@@ -1361,7 +1356,7 @@ FROM (
     SELECT
 {% if with_osm_id %} {{polygon.osm_id}}, {% endif %}
       {{polygon.tags}},
-      {{polygon.name}},{{polygon.place}},{{polygon.admin_level}},
+      {{polygon.name}},{{polygon.place_v}} AS class,{{polygon.admin_level}},
       COALESCE({{polygon.iso3166_1_alpha2_v}},{{polygon.iso3166_1_v}},{{polygon.country_code_fips_v}}) AS iso_a2,
       {{polygon.way}},
       -- 1 if place is a capital
@@ -1376,7 +1371,7 @@ FROM (
     SELECT
 {% if with_osm_id %} {{point.osm_id}}, {% endif %}
       {{point.tags}},
-      {{point.name}},{{point.place}},{{point.admin_level}},
+      {{point.name}},{{point.place_v}} AS class,{{point.admin_level}},
       COALESCE({{point.iso3166_1_alpha2_v}},{{point.iso3166_1_v}},{{point.country_code_fips_v}}) AS iso_a2,
       {{point.way}},
       coalesce({{point.capital_ctv}}='yes',({{point.admin_level_v}}::int<=2),false)::int AS capital_score,
@@ -1386,21 +1381,42 @@ FROM (
     WHERE {{point.place_v}} IN ('continent','country','state','province','city','town','village',
       'hamlet','suburb','quarter','neighbourhood','isolated_dwelling','island')
     ) AS layer_place
-    WHERE ST_Intersects(way,bounds_geom)) AS unfiltered_zoom
-  WHERE ((z>=12)
-    OR (z>=10 AND z<12 AND {{omt_func_pref}}_get_place_multiplier(class)>3)
-    OR (z>=07 AND z<10 AND {{omt_func_pref}}_get_place_multiplier(class)>6)
-    OR (z>=04 AND z<07 AND {{omt_func_pref}}_get_place_multiplier(class)>7)
-    OR (z>=02 AND z<04 AND {{omt_func_pref}}_get_place_multiplier(class)>9)
-    OR ({{omt_func_pref}}_get_place_multiplier(class)>10))
-  -- some cities are big enough to be shown above provinces. but weed out the small ones
-  AND (class!='city' OR (
-      -- zoom range implied from above 'city'==8 : 04<=z<07
-      (z>=7)
-      OR (z=6 AND score>1e6)
-      OR (z=5 AND score>2e6)
-      OR (z=4 AND score>3e6)
-    ));
+    WHERE ST_Intersects(way,bounds_geom) AND ((z>=12)
+      OR (z>=10 AND z<12 AND {{omt_func_pref}}_get_place_multiplier(class)>3)
+      OR (z>=07 AND z<10 AND {{omt_func_pref}}_get_place_multiplier(class)>6)
+      OR (z>=04 AND z<07 AND {{omt_func_pref}}_get_place_multiplier(class)>6) -- city+town include all, other filtering mechanism below...
+      OR (z>=02 AND z<04 AND {{omt_func_pref}}_get_place_multiplier(class)>9)
+      OR ({{omt_func_pref}}_get_place_multiplier(class)>10))
+), place_nocities AS (
+  SELECT * FROM place_toomuch_cities WHERE class NOT IN ('city','town')
+), place_onlycities AS (
+  SELECT * FROM place_toomuch_cities WHERE class IN ('city','town'))
+SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+    name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
+    -- add rank only at the end...
+    (ntile(9) OVER (ORDER BY score DESC))::int+1 AS rank,geom
+FROM (
+  SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+    name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
+    score,ST_AsMVTGeom(way,bounds_geom) AS geom
+  FROM place_nocities
+  UNION (
+-- some cities are big enough to be shown above provinces. but weed out the small ones
+  SELECT
+{% if with_osm_id %} osm_id, {% endif %}
+    name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
+    score,ST_AsMVTGeom(way,bounds_geom) AS geom
+  FROM place_onlycities ORDER BY score DESC
+  LIMIT (CASE WHEN (z>10) THEN 99999999
+    WHEN (z=10) THEN 250
+    WHEN (z=09) THEN 200
+    WHEN (z=08) THEN 160
+    WHEN (z=07) THEN 120
+    WHEN (z<=06) THEN 80 END)
+  )
+) AS filtered_cities_without_rank;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 

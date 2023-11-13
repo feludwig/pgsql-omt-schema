@@ -82,7 +82,8 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
 
 
 class Writer(threading.Thread) :
-    def __init__(self,get_new_cursor:typing.Callable[[],psycopg2.extensions.cursor],func_name:str,with_landarea_stats=True) :
+    def __init__(self,get_new_cursor:typing.Callable[[],psycopg2.extensions.cursor],
+            func_name:str,with_landarea_stats=True) :
         threading.Thread.__init__(self)
         self.get_new_cursor=get_new_cursor
         self.c=self.get_new_cursor()
@@ -152,10 +153,14 @@ class Writer(threading.Thread) :
             total_z_landarea+=curr_landarea
         #sort
         if w_l_a :
-            per_layer_stats_l=[(landarea_bytes,k,landarea,count,pcent,bytes,rowcount,landarea_rowcount)
-                    for k,(landarea,count,pcent,bytes,landarea_bytes,rowcount,landarea_rowcount) in per_layer_stats.items()]
-            per_layer_stats={k:(landarea,count,pcent,bytes,landarea_bytes,rowcount,landarea_rowcount)
-                    for (landarea_bytes,k,landarea,count,pcent,bytes,rowcount,landarea_rowcount) in sorted(per_layer_stats_l,reverse=True)}
+            per_layer_stats_l=[(landarea_bytes,k,landarea,count,pcent,bytes,
+                rowcount,landarea_rowcount)
+                    for k,(landarea,count,pcent,bytes,landarea_bytes,
+                        rowcount,landarea_rowcount) in per_layer_stats.items()]
+            per_layer_stats={k:(landarea,count,pcent,bytes,landarea_bytes,
+                rowcount,landarea_rowcount)
+                    for (landarea_bytes,k,landarea,count,pcent,bytes,rowcount,
+                        landarea_rowcount) in sorted(per_layer_stats_l,reverse=True)}
             #prepare print
             headers=['layer_name','avg_pcent','avg_landarea_bytes','avg_bytes','avg_landarea_rowcount','avg_rowcount']
             data=[(k,
@@ -164,9 +169,11 @@ class Writer(threading.Thread) :
                 get_size_pretty(round(bytes/count,1)),
                 str(round(landarea_rowcount/count)),
                 str(round(rowcount/count)),
-                ) for k,(landarea,count,pcent,bytes,landarea_bytes,rowcount,landarea_rowcount) in per_layer_stats.items()]
+                ) for k,(landarea,count,pcent,bytes,landarea_bytes,
+                    rowcount,landarea_rowcount) in per_layer_stats.items()]
         else :
-            per_layer_stats_l=[(bytes,k,count,pcent,rowcount) for k,(count,pcent,bytes,rowcount) in per_layer_stats.items()]
+            per_layer_stats_l=[(bytes,k,count,pcent,rowcount) for k,(landarea,count,
+                    pcent,bytes,landarea_bytes,rowcount,landarea_rowcount) in per_layer_stats.items()]
             per_layer_stats={k:(count,pcent,bytes,rowcount) for (bytes,k,count,pcent,rowcount) in sorted(per_layer_stats_l,reverse=True)}
             #prepare print
             headers=['layer_name','avg_pcent','avg_bytes','avg_rowcount']
@@ -282,7 +289,7 @@ if '--contours' in more :
     func_name='contours_vector'
 
 
-ts=[Writer(make_new_connection_cursor,func_name,with_landarea_stats=False) for i in range(30)]
+ts=[Writer(make_new_connection_cursor,func_name) for i in range(30)]
 
 start=time.time()
 

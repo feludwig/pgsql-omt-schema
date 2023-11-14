@@ -315,7 +315,7 @@ if '--contours' in more :
 
 ts=[Writer(make_new_connection_cursor,func_name) for i in range(30)]
 
-start=time.time()
+start_t=time.time()
 
 tix=0
 encountered_zooms=set()
@@ -337,4 +337,4 @@ print(total_z_count)
 print(round(total_bytes*1e-6,2),'MB total written')
 for z in encountered_zooms :
     Writer.print_layer_stats(make_new_connection_cursor(),ts,z)
-print(round(time.time()-start,1),'seconds')
+print(round(time.time()-start_t,1),'seconds')

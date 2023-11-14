@@ -18,6 +18,7 @@ import time
 import threading
 import queue
 import typing
+import statistics
 printer_lock=threading.Lock()
 make_cursor_lock=threading.Lock()
 
@@ -96,6 +97,7 @@ class Writer(threading.Thread) :
         self.total_written={z:0 for z in zs}
         self.total_count={z:0 for z in zs}
         self.per_layer_stats={z:{} for z in zs}
+        self.stats={z:{'size':[],'time':[],'landarea_size':[],'landarea_time':[]} for z in zs}
     def add_layer_stats_line(self,z,line:dict,weight=-1.0) :
         """ Where landarea_weight is the proportional land area
         of the entire tile, eg. 5/18/10 is poland only land (no ocean): weight=1.0
@@ -133,6 +135,7 @@ class Writer(threading.Thread) :
             c.execute(c.mogrify('SELECT pg_size_pretty(%s::numeric);',(d,)))
             return c.fetchone()[0]
         per_layer_stats={}
+        per_z_stats={'time':[],'size':[],'landarea_time':[],'landarea_size':[]}
         w_l_a=list_of_self[0].with_landarea_stats
         #collect all data
         total_z_count=0
@@ -151,6 +154,8 @@ class Writer(threading.Thread) :
             total_z_bytes+=i.total_written[z]
             total_z_count+=i.total_count[z]
             total_z_landarea+=curr_landarea
+            for k in ('time','size','landarea_time','landarea_size'):
+                per_z_stats[k].extend(i.stats[z][k])
         #sort
         if w_l_a :
             per_layer_stats_l=[(landarea_bytes,k,landarea,count,pcent,bytes,
@@ -191,21 +196,33 @@ class Writer(threading.Thread) :
         print(f'z{z:02}',*p_insert,':')
         run.print_table(data,headers)
 
-        if total_z_count==0 :
-            per_tile_kb_size=0
-        else :
-            per_tile_kb_size=round(total_z_bytes/total_z_count*1e-3,2)
-        if total_z_landarea==0 :
-            per_landarea_tile_kb_size=0
-        else :
-            per_landarea_tile_kb_size=round(total_z_bytes/total_z_landarea*1e-3,2)
-        if w_l_a :
-            p_end=(per_landarea_tile_kb_size,'KB/landarea_tile,',
-                total_z_count,'tiles',round(total_z_landarea,1),'landarea_tiles')
-        else :
-            p_end=(total_z_count,'tiles')
-        print('total',round(total_z_bytes*1e-6,2),'MB, average',
-                per_tile_kb_size,'KB/tile,',*p_end)
+        print('total',round(total_z_bytes*1e-6,2),'MB, statistics for',total_z_count,'tiles :')
+        #statistics
+        rows={
+            'time':lambda dgt,v:str(round(v,dgt))+'s/tile' if v!=None else '',
+            'size':lambda dgt,v:get_size_pretty(round(v,dgt))+'/tile' if v!=None else '',
+            'landarea_time':lambda dgt,v:str(round(v,dgt))+'s/landarea_tile' if v!=None else '',
+            'landarea_size':lambda dgt,v:get_size_pretty(round(v,dgt))+'/landarea_tile' if v!=None else '',
+        }
+        if not w_l_a :
+            rows.pop('landarea_time')
+            rows.pop('landarea_size')
+        stats_data=[]
+        for r,get_fmt in rows.items() :
+            data={}
+            data['median']=(1,statistics.median(per_z_stats[r]))
+            if len(per_z_stats[k])>=2 :
+                data['stdev']=(2,statistics.stdev(per_z_stats[r]))
+                data['1_pcent']=(0,statistics.quantiles(per_z_stats[r],n=100)[-1])
+                data['1_pmil']=(0,statistics.quantiles(per_z_stats[r],n=1000)[-1])
+            else :
+                data['stdev']=(2,None)
+                data['1_pcent']=(0,None)
+                data['1_pmil']=(0,None)
+            line=[r]
+            line.extend([get_fmt(r_dgts,v) for d_f,(r_dgts,v) in data.items()])
+            stats_data.append(line)
+        run.print_table(stats_data,('sample type','median','stdev','1% worst','0.1% worst'))
 
 
     def run(self) :
@@ -234,6 +251,7 @@ class Writer(threading.Thread) :
         q=f'SELECT * FROM {self.func_name}(%s,%s,%s);'
         for i in range(5) : #try again 5 times
             try :
+                st_t=time.time()
                 self.c.execute(self.c.mogrify(q,(z,x,y)))
                 success=True
                 break
@@ -266,10 +284,16 @@ class Writer(threading.Thread) :
 
         if not os.path.exists(f'{outdir}/{z}/{x}') :
             os.makedirs(f'{outdir}/{z}/{x}',exist_ok=True)
+        tot_t=time.time()-st_t
         with open(f'{outdir}/{z}/{x}/{y}.{format}','wb') as f:
             bs_written=f.write(out_data)
         self.total_written[z]+=bs_written
         self.total_count[z]+=1
+        self.stats[z]['time'].append(tot_t)
+        self.stats[z]['size'].append(bs_written)
+        if self.with_landarea_stats :
+            self.stats[z]['landarea_time'].append(tot_t/weight)
+            self.stats[z]['landarea_size'].append(bs_written/weight)
         with printer_lock :
             print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes')
 

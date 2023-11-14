@@ -746,7 +746,9 @@ WITH pre_country AS (
     admin_level,
     NULL AS adm0_l,NULL AS adm0_r,
     disputed,disputed_name,claimed_by,maritime,
-    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom))),bounds_geom) AS geom
+    ST_AsMVTGeom(
+      ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)),
+      bounds_geom) AS geom
   FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
   GROUP BY(admin_level,disputed,disputed_name,claimed_by,maritime)
 )
@@ -763,7 +765,10 @@ SELECT
     COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},{{line.country_code_fips_v}})
     ELSE NULL END) AS claimed_by,
   (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
-  ST_SimplifyPreserveTopology(ST_AsMVTGeom({{line.way_v}},bounds_geom),10) AS geom
+  ST_SimplifyPreserveTopology(ST_AsMVTGeom({{line.way_v}},bounds_geom),(CASE
+    WHEN z<=03 THEN 20
+    ELSE 10
+  END)) AS geom
 FROM {{omt_view_pref}}_country_boundaries AS {{line.table_name}}
 WHERE ST_Intersects({{line.way_v}},bounds_geom)
 {% if False %}
@@ -771,7 +776,10 @@ UNION
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   admin_level,adm0_l,adm0_r,disputed,disputed_name,claimed_by,maritime,
-  ST_SimplifyPreserveTopology(geom,10) AS geom
+  ST_SimplifyPreserveTopology(geom,(CASE
+    WHEN z<=03 THEN 20
+    ELSE 10
+  END)) AS geom
 FROM pre_country
 {% endif %};
 $$
@@ -1824,7 +1832,12 @@ FROM (
       (z=07 AND {{polygon.way_area_v}}>1536e3) OR
       (z=06 AND {{polygon.way_area_v}}>6e6) OR
       (z=05 AND {{polygon.way_area_v}}>24e6) OR
-      (z>=04 AND {{polygon.way_area_v}}>96e6)
+      -- show lake-like polygons only (rivers are not way_area big enough;
+      --  and also too small to see at that point)
+      (z=04 AND {{polygon.way_area_v}}>40e6) OR
+      (z=03 AND {{polygon.way_area_v}}>80e6) OR
+      (z=02 AND {{polygon.way_area_v}}>100e6) OR
+      (z<=01 AND {{polygon.way_area_v}}>200e6)
     )) AS foo;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1878,7 +1891,10 @@ BEGIN
     SELECT
     {% if with_osm_id %} 'wt_polygs' AS osm_id, {% endif %}
       'ocean' AS class,0 AS intermittent,
-      NULL AS brunnel,ST_AsMVTGeom(way,bounds_geom) AS geom
+      -- the _post_agg_water has already simplified
+      NULL AS brunnel,ST_SimplifyPreserveTopology(
+        ST_AsMVTGeom(way,bounds_geom),
+       10) AS geom
     FROM {{water_tabl}}
     WHERE ST_Intersects(way,bounds_geom);
 {% endfor %}

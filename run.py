@@ -371,10 +371,11 @@ def parse_indexed_create(sql_script:str,tmpl_defined:dict)->typing.Iterator[typi
                 # planet_osm_* USING GIST(way)
                 s_where=s_from.parent_select.find(sqlglot.expressions.Where)
                 if s_where==None :
+                    if s_from.parent_select.parent_select==None :
+                        continue
                     # just proactively take the parent.parent where
                     s_where=s_from.parent_select.parent_select.find(sqlglot.expressions.Where)
                     if s_where==None :
-                        print('ABANDONING: too complicated subquery, next function')
                         continue
 
                 # s_where references some data that should not be indexed:

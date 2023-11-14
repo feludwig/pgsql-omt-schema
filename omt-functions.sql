@@ -379,8 +379,17 @@ IF (SELECT count(*) FROM lake_centerline WHERE osm_id=-test_id)!=0 AND test_typ=
   RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=-test_id);
 ELSIF (SELECT count(*) FROM lake_centerline WHERE osm_id=test_id)!=0 AND test_typ='w' THEN
   RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=test_id);
-ELSE
+ELSIF NOT ST_Intersects(way,ST_Buffer(
+          ST_Transform(ST_SetSRID(ST_GeomFromText('LINESTRING(-180 89.999, -180 -89.999)'),4326),3857),
+        0.1)) THEN
   RETURN (SELECT ST_LongestLine(way,way));
+-- something special for lake names crossing the dateline
+ELSE
+  RETURN (WITH lines_dump AS (
+      SELECT ST_LongestLine((ST_Dump(way)).geom,(ST_Dump(way)).geom) AS l)
+    SELECT l FROM lines_dump
+    ORDER BY ST_Length(l) DESC LIMIT 1
+  );
 END IF;
 END
 $$
@@ -579,7 +588,9 @@ FROM (SELECT
     (z=09 AND {{polygon.way_area_v}}>600e3) OR
     (z=08 AND {{polygon.way_area_v}}>1e6) OR
     (z=07 AND {{polygon.way_area_v}}>1.8e6) OR
-    (z>=04 AND {{polygon.way_area_v}}>2.5e6)
+      -- polar regions! srid=8857 is area-preserving and area_8857~=area_3857 at EQUATOR ONLY
+      -- for performance: check way_area a tenth smaller too
+    (z>=04 AND {{polygon.way_area_v}}>1e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>1.2e6)
     -- show nothing at lower zooms
   )
   GROUP BY(subclass)
@@ -1478,11 +1489,6 @@ SELECT CASE class
 $$ LANGUAGE SQL IMMUTABLE PARALLEL SAFE;
 
 
--- TODO: boundaries ? or rather place: check way_area or described_are for points: very crowded with
--- extremely small villages on lower zoom
--- also make sure z_order AS rank is not detrimental: DO FIRST maybe it's why small villages show
--- on low zooms
-
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_poi_pre_rank(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_poi
 AS $$
@@ -1831,13 +1837,15 @@ FROM (
       (z=08 AND {{polygon.way_area_v}}>384e3) OR
       (z=07 AND {{polygon.way_area_v}}>1536e3) OR
       (z=06 AND {{polygon.way_area_v}}>6e6) OR
-      (z=05 AND {{polygon.way_area_v}}>24e6) OR
       -- show lake-like polygons only (rivers are not way_area big enough;
       --  and also too small to see at that point)
-      (z=04 AND {{polygon.way_area_v}}>40e6) OR
-      (z=03 AND {{polygon.way_area_v}}>80e6) OR
-      (z=02 AND {{polygon.way_area_v}}>100e6) OR
-      (z<=01 AND {{polygon.way_area_v}}>200e6)
+      -- polar regions! srid=8857 is area-preserving and area_8857~=area_3857 at EQUATOR ONLY
+      -- for performance: check way_area a tenth smaller too
+      (z=05 AND {{polygon.way_area_v}}>1e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>12e6) OR
+      (z=04 AND {{polygon.way_area_v}}>2e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>20e6) OR
+      (z=03 AND {{polygon.way_area_v}}>4e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>40e6) OR
+      (z=02 AND {{polygon.way_area_v}}>5e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>50e6) OR
+      (z<=01 AND {{polygon.way_area_v}}>10e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>100e6)
     )) AS foo;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;

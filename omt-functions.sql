@@ -611,6 +611,12 @@ FROM (SELECT
     -- show nothing at lower zooms
   )
   GROUP BY(subclass)
+  UNION
+  SELECT
+{% if with_osm_id %} 'icesh_polygs' AS osm_id, {% endif %}
+    'glacier' AS subclass,
+    ST_Union(way) AS way
+  FROM icesheet_polygons WHERE ST_Intersects(icesheet_polygons.way,bounds_geom)
 ) AS foo
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -1924,7 +1930,7 @@ BEGIN
       'ocean' AS class,0 AS intermittent,
       -- the _post_agg_water has already simplified
       NULL AS brunnel,ST_SimplifyPreserveTopology(
-        ST_AsMVTGeom(way,bounds_geom),
+        ST_AsMVTGeom(ST_Union(way),bounds_geom),
        10) AS geom
     FROM {{water_tabl}}
     WHERE ST_Intersects(way,bounds_geom);

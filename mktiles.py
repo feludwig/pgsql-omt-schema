@@ -297,8 +297,14 @@ class Writer(threading.Thread) :
         if not os.path.exists(f'{outdir}/{z}/{x}') :
             os.makedirs(f'{outdir}/{z}/{x}',exist_ok=True)
         tot_t=time.time()-st_t
-        with open(f'{outdir}/{z}/{x}/{y}.{format}','wb') as f:
-            bs_written=f.write(out_data)
+        dest_fn=f'{outdir}/{z}/{x}/{y}.{format}'
+        while True :
+            try :
+                with open(dest_fn,'wb') as f:
+                    bs_written=f.write(out_data)
+                break
+            except PermissionError as err:
+                input(f'{err} on file {dest_fn}, Press enter to retry:')
         self.total_written[z]+=bs_written
         self.total_count[z]+=1
         self.stats[z]['time'].append(tot_t)

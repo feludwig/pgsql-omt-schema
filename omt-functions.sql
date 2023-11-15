@@ -382,7 +382,24 @@ ELSIF (SELECT count(*) FROM lake_centerline WHERE osm_id=test_id)!=0 AND test_ty
 ELSIF NOT ST_Intersects(way,ST_Buffer(
           ST_Transform(ST_SetSRID(ST_GeomFromText('LINESTRING(-180 89.999, -180 -89.999)'),4326),3857),
         0.1)) THEN
-  RETURN (SELECT ST_LongestLine(way,way));
+  -- take p as pointonsurface. then return the line that is parallel to
+  --  way's st_longestline but also
+  --  crosses p. This is to ensure a "croissant" shaped lake will have its lakeline
+  --  across itself and not across the land. see osm_id=r3173129 or osm_id=r5864238
+  --  for how a longestline alone is not enough
+  RETURN (WITH
+      pt(g) AS(SELECT ST_PointOnSurface(way)),
+      p(x,y) AS(SELECT ST_X(pt.g),ST_Y(pt.g) FROM pt),
+      l(g) AS (SELECT ST_LongestLine(way,way)),
+      ps(x,y) AS (SELECT ST_X(ST_StartPoint(l.g)),ST_Y(ST_StartPoint(l.g)) FROM l),
+      pe(x,y) AS (SELECT ST_X(ST_EndPoint(l.g)),ST_Y(ST_EndPoint(l.g)) FROM l),
+      ll(g) AS (SELECT ST_MakeLine(ARRAY[
+        ST_Point(p.x-pe.x+ps.x,p.y-pe.y+ps.y,ST_SRID(way)),
+        ST_Point(p.x+pe.x-ps.x,p.y+pe.y-ps.y,ST_SRID(way))
+      ]) FROM p,ps,pe)
+  -- take intersection with way to cut out any over-land parts
+        SELECT ST_Intersection(ll.g,way) FROM ll
+  );
 -- something special for lake names crossing the dateline
 ELSE
   RETURN (WITH lines_dump AS (

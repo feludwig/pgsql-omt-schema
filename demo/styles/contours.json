@@ -10,6 +10,7 @@
       "tiles":[ 
         "https://feludwig.github.io/pgsql-omt-schema/demo/tiles/contours/{z}/{x}/{y}.pbf"
       ],
+      "minzoom":9,
       "maxzoom":15,
       "overzoom":1
     }

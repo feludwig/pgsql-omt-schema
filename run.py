@@ -199,6 +199,7 @@ need_columns={
         'capital', 'information','network','surface','foot',
         'horse','bicycle','toll','oneway','ramp','bridge',
         'tunnel','ford','service','expressway','mtb_scale',
+        'country_code_iso3166_1_alpha_2',
 
         'way', 'tags', 'osm_id',
     ),
@@ -212,7 +213,7 @@ need_columns={
         'network', 'oneway', 'ramp', 'service', 'toll',
         'expressway', 'layer', 'level', 'indoor','country_code_fips',
         'iso3166_1_alpha2','iso3166_1', 'housenumber', 'disputed',
-        'disputed_name',
+        'disputed_name','country_code_iso3166_1_alpha_2',
 
         'way', 'tags', 'osm_id',
     ),
@@ -233,6 +234,7 @@ need_columns={
         'construction','public_transport','network',
         'oneway','ramp','service','toll','expressway',
         'bicycle','foot','horse','mtb_scale','surface',
+        'country_code_iso3166_1_alpha_2',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),

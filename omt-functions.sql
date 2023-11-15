@@ -745,7 +745,8 @@ SELECT
   END) AS disputed,
   {{line.disputed_name}},
   (CASE {{line.admin_level_v}} WHEN '2' THEN
-    COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},{{line.country_code_fips_v}})
+    COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},
+      {{line.country_code_fips_v}},{{line.country_code_iso3166_1_alpha_2_v}})
     ELSE NULL END) AS claimed_by,
   (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
   {{line.way_v}} AS geom -- WARNING: abusive cast, still ST_AsMVTGeom(geom) missing
@@ -790,7 +791,8 @@ SELECT
   END) AS disputed,
   {{line.disputed_name}},
   (CASE {{line.admin_level_v}} WHEN '2' THEN
-    COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},{{line.country_code_fips_v}})
+    COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},
+      {{line.country_code_fips_v}},{{line.country_code_iso3166_1_alpha_2_v}})
     ELSE NULL END) AS claimed_by,
   (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
   ST_SimplifyPreserveTopology(ST_AsMVTGeom({{line.way_v}},bounds_geom),(CASE
@@ -1392,7 +1394,9 @@ WITH place_toomuch_cities AS (
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
       WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
     END) AS osm_id, {% endif %}
-    name,{{name_columns_run}} admin_level::integer AS capital,class,iso_a2,
+    name,{{name_columns_run}} (CASE
+      WHEN capital_score=1 THEN 2 ELSE NULL
+    END) AS capital,class,iso_a2,
     -- 1e3*1.9^(mlt^1.08)
     ((power(1.9,power({{omt_func_pref}}_get_place_multiplier(class),1.08))::int*1e3)+
       --sqlglot does not like implicit a*b+c*d, instead (a*b)+(c*d)
@@ -1403,8 +1407,9 @@ WITH place_toomuch_cities AS (
     SELECT
 {% if with_osm_id %} {{polygon.osm_id}}, {% endif %}
       {{polygon.tags}},
-      {{polygon.name}},{{polygon.place_v}} AS class,{{polygon.admin_level}},
-      COALESCE({{polygon.iso3166_1_alpha2_v}},{{polygon.iso3166_1_v}},{{polygon.country_code_fips_v}}) AS iso_a2,
+      {{polygon.name}},{{polygon.place_v}} AS class,
+      COALESCE({{polygon.iso3166_1_alpha2_v}},{{polygon.iso3166_1_v}},
+        {{polygon.country_code_fips_v}},{{polygon.country_code_iso3166_1_alpha_2_v}}) AS iso_a2,
       {{polygon.way}},
       -- 1 if place is a capital
       coalesce({{polygon.capital_ctv}}='yes',({{polygon.admin_level_v}}::int<=2),false)::int AS capital_score,
@@ -1418,8 +1423,9 @@ WITH place_toomuch_cities AS (
     SELECT
 {% if with_osm_id %} {{point.osm_id}}, {% endif %}
       {{point.tags}},
-      {{point.name}},{{point.place_v}} AS class,{{point.admin_level}},
-      COALESCE({{point.iso3166_1_alpha2_v}},{{point.iso3166_1_v}},{{point.country_code_fips_v}}) AS iso_a2,
+      {{point.name}},{{point.place_v}} AS class,
+      COALESCE({{point.iso3166_1_alpha2_v}},{{point.iso3166_1_v}},
+        {{point.country_code_fips_v}},{{point.country_code_iso3166_1_alpha_2_v}}) AS iso_a2,
       {{point.way}},
       coalesce({{point.capital_ctv}}='yes',({{point.admin_level_v}}::int<=2),false)::int AS capital_score,
       coalesce({{point.admin_centre_4_v}}='yes',({{point.admin_level_v}}::int<=4),false)::int AS province_score,

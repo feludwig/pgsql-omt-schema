@@ -28,16 +28,18 @@ format='pbf'
 
 
 #maximally parallelize database: new connections only
-def make_new_connection_cursor() :
+def make_new_connection_cursor()->[psycopg2.extensions.connection,psycopg2.extensions.cursor] :
     for i in range(5) :
         try :
             with make_cursor_lock :
                 access=psycopg2.connect(dbaccess)
-                return access.cursor()
+                return access,access.cursor()
         except psycopg2.Error as err :
             # wait and retry to connect to database
             time.sleep(10)
-    raise ValueError('Timed out after 50s trying to connect to database')
+    print('Timed out after 50s trying to connect to database')
+    print(*access.notices,sep='\n')
+    os._exit(1)
 
 def gen_zxy_readinput()->typing.Iterator[[int,int,int]] :
     while True :
@@ -83,11 +85,12 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
 
 
 class Writer(threading.Thread) :
-    def __init__(self,get_new_cursor:typing.Callable[[],psycopg2.extensions.cursor],
+    def __init__(self,get_access_new_cursor:typing.Callable[[],
+            [psycopg2.extensions.connection,psycopg2.extensions.cursor]],
             func_name:str,with_landarea_stats=True) :
         threading.Thread.__init__(self)
-        self.get_new_cursor=get_new_cursor
-        self.c=self.get_new_cursor()
+        self.get_access_new_cursor=get_access_new_cursor
+        self.access,self.c=self.get_access_new_cursor()
         self.finished=False
         self.func_name=func_name
         self.function_returns_stats=func_name.find('stats')>=0
@@ -246,6 +249,14 @@ class Writer(threading.Thread) :
         self.todo.put((None,None,None))
         threading.Thread.join(self)
 
+    def print_notices(self) :
+        notices_toprint=[]
+        while len(self.access.notices)!=0 :
+            notices_toprint.append(self.access.notices.pop(0))
+        if len(notices_toprint)!=0 :
+            with printer_lock :
+                print('\t\t','\n\t\t'.join(notices_toprint))
+
     def process(self,z,x,y) :
         success=False
         q=f'SELECT * FROM {self.func_name}(%s,%s,%s);'
@@ -261,9 +272,10 @@ class Writer(threading.Thread) :
                     self.c.execute('ABORT;')
                 except psycopg2.Error as err2 :
                     #need to re-connect to database
-                    self.c=self.get_new_cursor()
+                    self.access,self.c=self.get_access_new_cursor()
                 with printer_lock :
                     print(f'{z:2}/{x}/{y}.{format}\t','failed SQL retrying')
+                self.print_notices()
         if not success :
             with printer_lock :
                 print(f'{z:2}/{x}/{y}.{format}\t','retried 5 times, abandoning')
@@ -296,6 +308,7 @@ class Writer(threading.Thread) :
             self.stats[z]['landarea_size'].append(bs_written/weight)
         with printer_lock :
             print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes')
+        self.print_notices()
 
 dbaccess,mode,outdir,*more=sys.argv[1:]
 if mode=='--range' :
@@ -313,7 +326,9 @@ if '--contours' in more :
     func_name='contours_vector'
 
 
-ts=[Writer(make_new_connection_cursor,func_name) for i in range(30)]
+# "ERROR:  too many dynamic shared memory segments" if you have too
+#   many running concurrently, it seems 10 is good enough
+ts=[Writer(make_new_connection_cursor,func_name) for i in range(10)]
 
 start_t=time.time()
 
@@ -336,5 +351,5 @@ total_z_count={z:sum(t.total_count[z] for t in ts) for z in encountered_zooms}
 print(total_z_count)
 print(round(total_bytes*1e-6,2),'MB total written')
 for z in encountered_zooms :
-    Writer.print_layer_stats(make_new_connection_cursor(),ts,z)
+    Writer.print_layer_stats(make_new_connection_cursor()[1],ts,z)
 print(round(time.time()-start_t,1),'seconds')

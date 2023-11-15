@@ -313,7 +313,7 @@ class Writer(threading.Thread) :
             self.stats[z]['landarea_time'].append(tot_t/weight)
             self.stats[z]['landarea_size'].append(bs_written/weight)
         with printer_lock :
-            print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes')
+            print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes\t',round(tot_t,2),'s')
         self.print_notices()
 
 dbaccess,mode,outdir,*more=sys.argv[1:]

@@ -1135,7 +1135,8 @@ FROM (
     END) AS surface,
     ST_AsMVTGeom({{point.way_v}},bounds_geom) AS geom
   FROM {{point.table_name}}
-  WHERE {{point.highway_v}} IN ('motorway_junction') AND ST_Intersects({{point.way_v}},bounds_geom)
+  WHERE (z>=10) AND {{point.highway_v}} IN ('motorway_junction')
+    AND ST_Intersects({{point.way_v}},bounds_geom)
 ) AS unfiltered_zoom
 WHERE (
      (z>=12 AND class IS NOT NULL) -- take everything
@@ -1905,9 +1906,17 @@ SELECT
     array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
   class,intermittent,brunnel,
-  ST_SimplifyPreserveTopology(
+  ST_Simplify(
     ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
-  10) AS geom
+    -- at z04~z07, some water polygons sometimes make horrible triangles
+    --  (always pointing to the right somehow), and the ST_SimplifyPreserveTopology
+    -- threshold can make them go away. But setting it too low means more data.
+    -- please report issues if these settings still make bad water triangles.
+    -- sample tiles: 7/110/51 ocean polygons, 6/35/23 and 6/36/23 river Danube
+    --  4/0/4 ocean polygons
+    CASE WHEN z>=5 AND z<07 THEN 3
+    WHEN z=4 THEN 1
+    ELSE 10 END) AS geom
 FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
 GROUP BY (class,intermittent,brunnel);
 $$
@@ -1929,9 +1938,12 @@ BEGIN
     {% if with_osm_id %} 'wt_polygs' AS osm_id, {% endif %}
       'ocean' AS class,0 AS intermittent,
       -- the _post_agg_water has already simplified
-      NULL AS brunnel,ST_SimplifyPreserveTopology(
-        ST_AsMVTGeom(ST_Union(way),bounds_geom),
-       10) AS geom
+      NULL AS brunnel,ST_Simplify(
+        ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
+    -- see _post_agg_water for explanation
+        --10) AS geom
+        CASE WHEN z>=4 AND z<=7 THEN 3
+        ELSE 10 END) AS geom
     FROM {{water_tabl}}
     WHERE ST_Intersects(way,bounds_geom);
 {% endfor %}

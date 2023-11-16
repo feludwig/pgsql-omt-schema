@@ -250,7 +250,8 @@ function set_name_property(lang) {
       if (lang==null) {
         //console.log(l.id,in_prop,JSON.stringify(in_prop));
         // cannonicalize
-        var new_prop2=replace_recursive_prop(in_prop,'{name:nonlatin}',['get','name:nonlatin']);
+        var new_prop3=replace_recursive_prop(in_prop,'{name:nonlatin}',['get','name:nonlatin']);
+        var new_prop2=replace_recursive_prop(new_prop3,['get','name:latin'],new_name);
         var new_prop=replace_recursive_prop(new_prop2,'{name:latin}',new_name);
         //console.log(l.id,new_prop,JSON.stringify(new_prop));
       } else if (lang=='local') {

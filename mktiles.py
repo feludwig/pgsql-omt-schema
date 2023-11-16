@@ -48,7 +48,11 @@ def gen_zxy_readinput()->typing.Iterator[[int,int,int]] :
         except EOFError :
             #finished
             return
-        z,x,y=line.split(' ')
+        try :
+            z,x,y=line.split(' ')
+        except ValueError as err :
+            print('ERROR parsing line=',line)
+            exit(1)
         yield (int(z),int(x),int(y))
 
 def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
@@ -259,7 +263,7 @@ class Writer(threading.Thread) :
 
     def process(self,z,x,y) :
         success=False
-        q=f'SELECT * FROM {self.func_name}(%s,%s,%s);'
+        q=f'SELECT * FROM {self.func_name};'
         for i in range(5) : #try again 5 times
             try :
                 st_t=time.time()
@@ -309,7 +313,8 @@ class Writer(threading.Thread) :
         self.total_count[z]+=1
         self.stats[z]['time'].append(tot_t)
         self.stats[z]['size'].append(bs_written)
-        if self.with_landarea_stats :
+        if self.with_landarea_stats and weight>1e-5:
+            # if weight~=0, just don't sample...
             self.stats[z]['landarea_time'].append(tot_t/weight)
             self.stats[z]['landarea_size'].append(bs_written/weight)
         with printer_lock :
@@ -318,7 +323,8 @@ class Writer(threading.Thread) :
 
 dbaccess,mode,outdir,*more=sys.argv[1:]
 if mode=='--range' :
-    z,x,y=more
+    z,x,*y=more
+    y=y[0]
     tiles_generator=gen_zxy_range(z,x,y)
 elif mode=='--list' :
     tiles_generator=gen_zxy_readinput()
@@ -327,9 +333,12 @@ else :
     exit(1)
 
 
-func_name='omt_all_with_stats'
+func_name='omt_all_with_stats(%s,%s,%s)'
 if '--contours' in more :
-    func_name='contours_vector'
+    func_name='contours_vector(%s,%s,%s)'
+if '--single' in more :
+    layer_name=more[more.index('--single')+1]
+    func_name=f"omt_all_single_layer(%s,%s,%s,'{layer_name}')"
 
 
 # "ERROR:  too many dynamic shared memory segments" if you have too

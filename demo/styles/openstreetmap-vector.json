@@ -9862,18 +9862,12 @@
           ]
         },
         "icon-image": "{subclass}",
-        "text-field": {
-          "stops": [
-            [
+        "text-field": ["step",["zoom"],
               15,
-              ""
-            ],
-            [
+              "",
               16,
               "{name:latin}\n{name:nonlatin}"
-            ]
-          ]
-        },
+            ],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [
@@ -10397,18 +10391,12 @@
           ]
         },
         "icon-image": "{subclass}",
-        "text-field": {
-          "stops": [
-            [
+        "text-field": ["step",["zoom"],
               15,
-              ""
-            ],
-            [
+              "",
               16,
               "{name:latin}\n{name:nonlatin}"
-            ]
-          ]
-        },
+          ],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [
@@ -10522,18 +10510,12 @@
           ]
         },
         "icon-image": "{subclass}",
-        "text-field": {
-          "stops": [
-            [
+        "text-field": ["step",["zoom"],
               14,
-              ""
-            ],
-            [
+              "",
               16,
               "{name:latin}\n{name:nonlatin}"
-            ]
-          ]
-        },
+            ],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [
@@ -10641,18 +10623,12 @@
           ]
         },
         "icon-image": "{subclass}",
-        "text-field": {
-          "stops": [
-            [
+        "text-field": ["step",["zoom"],
               17,
-              ""
-            ],
-            [
+              "",
               18,
               "{name:latin}\n{name:nonlatin}"
-            ]
-          ]
-        },
+            ],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [
@@ -10708,18 +10684,12 @@
           ]
         },
         "icon-image": "{subclass}",
-        "text-field": {
-          "stops": [
-            [
+        "text-field": ["step",["zoom"],
               15,
-              ""
-            ],
-            [
+              "",
               16,
               "{name:latin}\n{name:nonlatin}"
-            ]
-          ]
-        },
+            ],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [
@@ -11596,18 +11566,12 @@
           ]
         },
         "icon-image": "aerodrome.12",
-        "text-field": {
-          "stops": [
-            [
+        "text-field": ["step",["zoom"],
               8,
-              " "
-            ],
-            [
+              " ",
               11,
               "{name:latin}\n{name:nonlatin}"
-            ]
-          ]
-        },
+        ],
         "visibility": "visible",
         "text-anchor": "top",
         "text-offset": [

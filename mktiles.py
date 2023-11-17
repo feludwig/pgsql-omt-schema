@@ -91,13 +91,14 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
 class Writer(threading.Thread) :
     def __init__(self,get_access_new_cursor:typing.Callable[[],
             [psycopg2.extensions.connection,psycopg2.extensions.cursor]],
-            func_name:str,with_landarea_stats=True) :
+            query_to_run:str,with_landarea_stats=True) :
         threading.Thread.__init__(self)
         self.get_access_new_cursor=get_access_new_cursor
         self.access,self.c=self.get_access_new_cursor()
         self.finished=False
-        self.func_name=func_name
-        self.function_returns_stats=func_name.find('stats')>=0
+        self.query=query_to_run
+        self.function_returns_stats=self.query.find('stats')>=0
+        self.multiply_mogrify_args=self.query.count('%s')//3
         self.todo=queue.Queue(maxsize=0) #infinite size
         self.with_landarea_stats=with_landarea_stats
     def set_zooms(self,zs) :
@@ -263,11 +264,10 @@ class Writer(threading.Thread) :
 
     def process(self,z,x,y) :
         success=False
-        q=f'SELECT * FROM {self.func_name};'
         for i in range(5) : #try again 5 times
             try :
                 st_t=time.time()
-                self.c.execute(self.c.mogrify(q,(z,x,y)))
+                self.c.execute(self.c.mogrify(self.query,(z,x,y)*self.multiply_mogrify_args))
                 success=True
                 break
             # when function was redefined while running/did not exist when needed
@@ -333,17 +333,21 @@ else :
     exit(1)
 
 
-func_name='omt_all_with_stats(%s,%s,%s)'
+query_to_run=f'SELECT * FROM omt_all_with_stats(%s,%s,%s);'
 if '--contours' in more :
-    func_name='contours_vector(%s,%s,%s)'
-if '--single' in more :
+    query_to_run=f'SELECT * FROM contours_vector(%s,%s,%s);'
+elif '--single' in more :
     layer_name=more[more.index('--single')+1]
-    func_name=f"omt_all_single_layer(%s,%s,%s,'{layer_name}')"
+    query_to_run=f"SELECT omt_all_single_layer(%s,%s,%s,'{layer_name}');"
+elif '--layers' in more :
+    layer_names=more[more.index('--layers')+1].split(',')
+    func_name='||'.join(f"omt_all_single_layer(%s,%s,%s,'{l}')" for l in layer_names)
+    query_to_run='SELECT '+func_name+';'
 
 
 # "ERROR:  too many dynamic shared memory segments" if you have too
 #   many running concurrently, it seems 10 is good enough
-ts=[Writer(make_new_connection_cursor,func_name) for i in range(10)]
+ts=[Writer(make_new_connection_cursor,query_to_run) for i in range(10)]
 
 start_t=time.time()
 

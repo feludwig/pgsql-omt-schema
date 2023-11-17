@@ -64,7 +64,7 @@ of all needed columns is in the [run.py](run.py) driver, `need_columns` and `ali
   - `CREATE/DROP TYPE`,
   - `CREATE/DROP INDEX` (optional),
   - `CREATE OR REPLACE FUNCTION`, and
-  - `CREATE/DROP (MATERIALIZED) VIEW`
+  - `CREATE/DROP TABLE` for NaturalEarth data
 * The tables are found **by suffix**,
 the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 * All concerned geometry tables have their geometry column called `way`
@@ -110,6 +110,16 @@ for serving the generated vector tiles
 * _Recommended_ : a file caching server, especially for your low-zoom tiles that
 can take a long time to generate.
 
+# Dependencies at import
+
+* [`ogr2ogr`](https://gdal.org/programs/ogr2ogr.html) from GDAL
+* `sqlite3`
+* `python3`
+
+On a debian-based system:
+```
+sudo apt-get install wget python3 sqlite3 libgdal-dev
+```
 
 # Usage
 
@@ -121,6 +131,23 @@ Static data [lake_centerline.geojson](lake_centerline.geojson) is from
 ```
 python3 run.py 'dbname=gis port=5432' --lake
 ```
+
+### Load [Natural Earth](https://www.naturalearthdata.com/downloads/) data
+
+Dependencies:
+```
+sudo apt-get install wget python3 sqlite3 libgdal-dev
+```
+```
+bash naturalearth_get.sh 'dbname=gis port=5432'
+```
+
+
+This downloads a 800MB zip of lowzoom Natural Earth data, extracts, converts
+and imports it into the database.
+It creates static tables `ne_10m_*`,`ne_50m_*`,`ne_110m_*` for various
+layers at low zooms, like oceans for `water` or country+province boundaries for `boundary`.
+
 
 ### Create the SQL functions
 

@@ -33,7 +33,6 @@ argparse TODO:
         - index [create all indexes]
         - index-print
         - index-drop [drop all indexes]
-        - view [create materialized view]
         - contours [create or replace the contours function]
         ...
     * HOWTO template vars configure:
@@ -43,7 +42,6 @@ argparse TODO:
             --typ-pref [prefix for typenames]
             --func-pref [prefix]
             --all-pref [prefix] TODO: remove and use {{omt_func_pref}}_all ?
-            --view-pref [prefix]
 
 DEMO TODO:
     also generate contours tiles: make mktiles parametrizable, run it twice
@@ -513,10 +511,7 @@ TEMPLATE_VARS={
     'omt_typ_pref':'row_omt',
     # all functions except omt_all_func will have this prefix
     'omt_func_pref':'public.omt',
-    # all views/matviews will have this prefix
-    'omt_view_pref':'public.planet_osm',
-    # indexes on those views/matviews will have this prefix.
-    # WARNING: schema unsupported ("syntax error")
+    # all index names relating to the created functions will use this prefix
     'omt_idx_pref':'planet_osm',
     # DOES NOT use the omt_func_pref
     'omt_all_func':'public.omt_all',
@@ -566,7 +561,6 @@ if __name__=='__main__' :
     tmpl_defined={**tmpl_defined,**TEMPLATE_VARS,**test_tile}
     e.globals=tmpl_defined
     sql_functions_script=render_template_file('omt-functions.sql')
-    sql_views_script=render_template_file('omt-views.sql')
     sql_contours_script=render_template_file('contours-function.sql')
 
     if len(sys.argv)>2 and sys.argv[2]=='--print' :
@@ -598,7 +592,6 @@ if __name__=='__main__' :
         print(dict(zip(cols,data)))
         c.execute('COMMIT;')
     else :
-        run_sql_script(c,sql_views_script)
         run_sql_script(c,sql_functions_script)
         print('test tile',[tmpl_defined['test_'+k] for k in 'zxy'])
         print_stats(c)

@@ -578,17 +578,17 @@ FROM (SELECT
         'saltmarsh','mangrove') THEN {{polygon.wetland_v}}
       ELSE NULL
     END ) AS subclass,
-  ST_UnaryUnion(unnest(ST_ClusterIntersecting(CASE
+  ST_ExteriorRing(ST_UnaryUnion(unnest(ST_ClusterIntersecting(CASE
         WHEN z>=11 THEN way
-        WHEN z=10 THEN ST_Buffer(way,60)
-        WHEN z=09 THEN ST_Buffer(way,120)
-        WHEN z=08 THEN ST_Buffer(way,250)
-        WHEN z=07 THEN ST_Buffer(way,500)
-        WHEN z=06 THEN ST_Buffer(way,1e3)
-        WHEN z=05 THEN ST_Buffer(way,1.5e3)
-        WHEN z=04 THEN ST_Buffer(way,2e3)
+        WHEN z=10 THEN ST_Buffer(way,30)
+        WHEN z=09 THEN ST_Buffer(way,60)
+        WHEN z=08 THEN ST_Buffer(way,120)
+        WHEN z=07 THEN ST_Buffer(way,250)
+        WHEN z=06 THEN ST_Buffer(way,500)
+        WHEN z=05 THEN ST_Buffer(way,1e3)
+        WHEN z=04 THEN ST_Buffer(way,2.5e3)
         ELSE NULL
-    END))) AS way
+    END)))) AS way
   FROM {{polygon.table_name}}
   WHERE ({{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
     'grass','grassland','meadow','forest','village_green','recreation_ground')
@@ -736,7 +736,7 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_country_boundary(bounds_geom geometry, z integer)
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_post_agg_boundary(bounds_geom geometry, z integer)
 RETURNS setof {{omt_typ_pref}}_boundary
 -- pre_country: with not-yet set adm0_l and adm0_r columns, and the ORIGINAL way geometry
 AS $$
@@ -757,14 +757,12 @@ SELECT
   (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
   {{line.way_v}} AS geom -- WARNING: abusive cast, still ST_AsMVTGeom(geom) missing
 FROM {{line.table_name}}
-WHERE ({{line.boundary_v}} IN ('administrative','disputed')
-    OR (z<=4 AND ({{line.boundary_v}} IN ('maritime')
-      AND {{line.admin_level_v}} IN ('1','2')))) AND (
+WHERE {{line.boundary_v}} IN ('administrative','disputed') AND (
     (z>=11)
     --OR (z<11 AND {{line.admin_level_v}} IN ('1','2','3','4','5','6','7'))
     OR (z<11 AND z>= 8 AND {{line.admin_level_v}} IN ('1','2','3','4','5','6'))
-    OR (z< 8 AND z>= 3 AND {{line.admin_level_v}} IN ('1','2','3','4'))
-    OR (z< 3 AND {{line.admin_level_v}} IN ('1','2'))
+    OR (z< 8 AND z>= 7 AND {{line.admin_level_v}} IN ('1','2','3','4'))
+    -- switch to naturalearth data at z06 and less
   ) AND ST_Intersects({{line.way_v}},bounds_geom);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
@@ -773,7 +771,7 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_boundary(bounds_geom geometry, z integer)
 RETURNS setof {{omt_typ_pref}}_boundary
 AS $$
-WITH pre_country AS (
+WITH osmdata_boundary AS (
   SELECT
 {% if with_osm_id %}
     array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
@@ -784,40 +782,93 @@ WITH pre_country AS (
     ST_AsMVTGeom(
       ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)),
       bounds_geom) AS geom
-  FROM {{omt_func_pref}}_pre_country_boundary(bounds_geom,z)
+  FROM {{omt_func_pref}}_post_agg_boundary(bounds_geom,z)
+  WHERE z>=07
   GROUP BY(admin_level,disputed,disputed_name,claimed_by,maritime)
-)
-SELECT
-{% if with_osm_id %}
-  (CASE WHEN {{line.osm_id_v}}<0 THEN 'r'||(-{{line.osm_id_v}})
-    WHEN {{line.osm_id_v}}>0 THEN 'w'||{{line.osm_id_v}} END) AS osm_id,
-{% endif %}
-  {{line.admin_level_v}}::integer AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
-  (CASE WHEN {{line.disputed_v}} IN ('yes') OR {{line.boundary_v}} IN ('disputed') THEN 1
-  END) AS disputed,
-  {{line.disputed_name}},
-  (CASE {{line.admin_level_v}} WHEN '2' THEN
-    COALESCE({{line.iso3166_1_alpha2_v}},{{line.iso3166_1_v}},
-      {{line.country_code_fips_v}},{{line.country_code_iso3166_1_alpha_2_v}})
-    ELSE NULL END) AS claimed_by,
-  (CASE {{line.boundary_v}} WHEN 'maritime' THEN 1 ELSE 0 END) AS maritime,
-  ST_SimplifyPreserveTopology(ST_AsMVTGeom({{line.way_v}},bounds_geom),(CASE
-    WHEN z<=03 THEN 20
-    ELSE 10
-  END)) AS geom
-FROM {{omt_view_pref}}_country_boundaries AS {{line.table_name}}
-WHERE ST_Intersects({{line.way_v}},bounds_geom)
-{% if False %}
-UNION
-SELECT
+) SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   admin_level,adm0_l,adm0_r,disputed,disputed_name,claimed_by,maritime,
-  ST_SimplifyPreserveTopology(geom,(CASE
-    WHEN z<=03 THEN 20
-    ELSE 10
-  END)) AS geom
-FROM pre_country
-{% endif %};
+  ST_SimplifyPreserveTopology(geom,10) AS geom
+FROM osmdata_boundary
+-- ne_10m_admin_0_boundary_lines_land : [admin_level=2]
+-- 00<=z<=01: ne_110m
+--  02<=z<=04: ne_50m
+--  05<=z<=06: ne_10m
+--  07<=z: osm_boundaries
+--    ===AND===
+-- ne_10m_admin_1_states_provinces_lines : [admin_level=4]
+-- z>=07 AND z>=04: ne_10m
+-- z>=01 AND z<=03: ne_50m
+-- z=00: nothing
+{% for admin_level,do_maritime_test,z_cond,tbl_name in (
+  (2,'','z<=01','ne_110m_admin_0_boundary_lines_land'),
+  (2,'','z>=02 AND z<=04','ne_50m_admin_0_boundary_lines_land'),
+  (2,'','z>=05 AND z<=06','ne_10m_admin_0_boundary_lines_land'),
+  (4,'ne_50m_ocean','z>=01 AND z<=03','ne_50m_admin_1_states_provinces_lines'),
+  (4,'ne_10m_ocean','z>=04 AND z<=06','ne_10m_admin_1_states_provinces_lines'),
+  ) %}
+UNION
+SELECT
+{% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
+  {{admin_level}} AS admin_level,
+  {% if tbl_name == 'ne_10m_admin_0_boundary_lines_land' %}
+  -- data does not exist in other tables
+  adm0_a3_l AS adm0_l,adm0_a3_r AS adm0_r,
+  {% else %}
+  NULL AS adm0_l,NULL AS adm0_r,
+  {% endif %}
+  0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,
+  {% if do_maritime_test != '' %}
+    bool_or(ST_Equals(
+        {{tbl_name}}.way,
+        ST_Intersection({{tbl_name}}.way,ocean.way)
+    ))::int AS maritime,
+  {% else %}
+    0 AS maritime,
+  {% endif %}
+  ST_AsMVTGeom({{tbl_name}}.way,bounds_geom) AS geom
+  FROM {{tbl_name}}
+  {% if do_maritime_test != '' %}
+  , {{do_maritime_test}} AS ocean
+  {% endif %}
+  WHERE ST_Intersects({{tbl_name}}.way,bounds_geom) AND {{z_cond}}
+  {% if do_maritime_test != '' %}
+  GROUP BY({{tbl_name}}.ogc_fid)
+  {% endif %}
+{% endfor %}
+UNION
+-- ne_10m_admin_0_boundary_lines_maritime_indicator: "indicator" means not the full EEZ,
+--  only a suggestive line between two ambiguously near landmasses... see DK/SE for example
+--  REMOVE the medianline_83 whatever it is...
+--  03<=z all the way to z20
+SELECT
+{% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
+  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
+  0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+FROM ne_10m_admin_0_boundary_lines_maritime_indicator
+WHERE note !~ 'medianLine' AND ST_Intersects(way,bounds_geom) AND z>=03 AND z>=(min_zoom+2)
+UNION
+--  00<=z<=02 ne_110m_admin_0_pacific_groupings
+SELECT
+{% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
+  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
+  0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+FROM ne_110m_admin_0_pacific_groupings
+WHERE ST_Intersects(way,bounds_geom) AND z<=02
+UNION
+-- do something with ne_10m_admin_0_disputed_areas
+SELECT
+{% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
+  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
+  1 AS disputed,COALESCE(brk_group,name) AS disputed_name,
+  adm0_a3 AS claimed_by,0 AS maritime,
+  ST_AsMVTGeom(ST_Boundary(way),bounds_geom) AS geom
+  FROM ne_10m_admin_0_disputed_areas
+-- ignore min_zoom column because boundary might show up as undisputed else
+WHERE ST_Intersects(way,bounds_geom)
+;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1925,32 +1976,34 @@ LANGUAGE 'sql' STABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry, z integer)
 RETURNS setof {{omt_typ_pref}}_water
 AS $$
-BEGIN
-{% for first_line,water_tabl in (
-  ('IF z<=07 THEN','simplified_water_polygons'),
-  ('ELSE','water_polygons')) %}
-{{first_line}}
--- simplified_water_polygons where z<=07, water_polygons else => class="ocean"
-  RETURN QUERY
-    SELECT * FROM {{omt_func_pref}}_post_agg_water(bounds_geom,z)
-    UNION
-    SELECT
-    {% if with_osm_id %} 'wt_polygs' AS osm_id, {% endif %}
-      'ocean' AS class,0 AS intermittent,
-      -- the _post_agg_water has already simplified
-      NULL AS brunnel,ST_Simplify(
-        ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
-    -- see _post_agg_water for explanation
-        --10) AS geom
-        CASE WHEN z>=4 AND z<=7 THEN 3
-        ELSE 10 END) AS geom
-    FROM {{water_tabl}}
-    WHERE ST_Intersects(way,bounds_geom);
+WITH osmdata_water AS (
+  SELECT * FROM {{omt_func_pref}}_post_agg_water(bounds_geom,z)
+  WHERE z>=04)
+SELECT * FROM osmdata_water
+{% for z_cond,tbl_name in (
+  ('z<=01','ne_110m_ocean'),
+  ('z>=02 AND z<=04','ne_50m_ocean'),
+  ('z>=05 AND z<=06','ne_10m_ocean'),
+  ) %}
+UNION
+SELECT
+{% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
+  'ocean' AS class,0 AS intermittent,NULL AS brunnel,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+  FROM {{tbl_name}}
+  WHERE ST_Intersects(way,bounds_geom) AND {{z_cond}}
 {% endfor %}
-END IF;
-END;
+UNION
+SELECT
+{% if with_osm_id %} 'wt_polygs' AS osm_id, {% endif %}
+  'ocean' AS class,0 AS intermittent,
+  -- the _post_agg_water has already simplified
+  NULL AS brunnel,ST_SimplifyPreserveTopology(
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
+    10) AS geom
+FROM water_polygons WHERE ST_Intersects(way,bounds_geom) AND z>=07;
 $$
-LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
+LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_collect_all(z integer, x integer, y integer)

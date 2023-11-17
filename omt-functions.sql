@@ -1914,7 +1914,7 @@ SELECT
     -- please report issues if these settings still make bad water triangles.
     -- sample tiles: 7/110/51 ocean polygons, 6/35/23 and 6/36/23 river Danube
     --  4/0/4 ocean polygons
-    CASE WHEN z>=5 AND z<07 THEN 3
+    CASE WHEN z>=5 THEN 3
     WHEN z=4 THEN 1
     ELSE 10 END) AS geom
 FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)

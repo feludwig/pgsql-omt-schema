@@ -829,9 +829,9 @@ AS $$
 BEGIN
   IF z>=07 THEN
       -- SELECT ... [and then add UNION SELECT other stuff]
-    RETURN QUERY {{query_osmdata_boundary()}}
-      {{union_query_naturalearth_always_boundary()}}
-      ;
+    RETURN QUERY
+      {{query_osmdata_boundary()}}
+      {{union_query_naturalearth_always_boundary()}} ;
   ELSE -- z<=06
     RETURN QUERY
 --  00<=z<=02 ne_110m_admin_0_pacific_groupings
@@ -888,8 +888,7 @@ SELECT
   GROUP BY({{tbl_name}}.ogc_fid)
   {% endif %}
 {% endfor %}
-{{union_query_naturalearth_always_boundary()}}
-;
+{{union_query_naturalearth_always_boundary()}} ;
   END IF;
 END;
 $$
@@ -1424,8 +1423,6 @@ BEGIN
   IF (z<=04) THEN
     RETURN; -- 0 rows, empty at lowest zoom levels
   ELSIF (z<=10) THEN
-      -- only osm_id if not in transportation_name
-      --{% if with_osm_id %} (CASE WHEN name IS NULL AND ref IS NULL THEN osm_id END) AS osm_id, {% endif %}
     RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_z_low_10(bounds_geom,z);
   ELSE
     RETURN QUERY SELECT * FROM {{omt_func_pref}}_transportation_highz(bounds_geom,z);
@@ -2038,7 +2035,7 @@ BEGIN
       {{query_osmdata_water()}}
       {{union_query_naturalearth_ocean('ne_10m_ocean')}};
   ELSIF z=04 THEN
-    RETURN QUERY {{ query_osmdata_water()}};
+    RETURN QUERY
       {{query_osmdata_water()}}
       {{union_query_naturalearth_ocean('ne_50m_ocean')}};
   ELSIF z>=02 AND z<=03 THEN
@@ -2046,7 +2043,7 @@ BEGIN
       {{union_query_naturalearth_ocean('ne_50m_ocean',with_union=False)}};
   ELSE
     RETURN QUERY
-    {{union_query_naturalearth_ocean('ne_110m_ocean',with_union=False)}};
+      {{union_query_naturalearth_ocean('ne_110m_ocean',with_union=False)}};
   END IF;
 END;
 $$

@@ -33,8 +33,8 @@ homepage of [openstreetmap](https://www.openstreetmap.org).
 * names of cities/roads/POIs etc can be switched over to other language
   (or take local name and add english internationalized name in parens below)
 * elevation data can be displayed in a richer way than "just" contours or hillshades:
-  3d map (`add_relief` function)
-* map can be rotated and name labels stay, on mobile with two fingers and on the computer
+  3D map "Add relief" button
+* map can be rotated and name labels stay horizontal, on mobile with two fingers and on the computer
   with a right-click+hold-and-drag
 * zoom levels are not discrete steps, but can be in a smooth range (eg z=15.68, impossible on raster).
   And the names/labels all scale continuously as well, instead of "jumping" in size like on a raster map
@@ -49,14 +49,17 @@ homepage of [openstreetmap](https://www.openstreetmap.org).
 for a little more perfomance
 
 * `osm2pgsql` was run with `--hstore` containing all missing tags. A mix
-of database columns and `tags->'colname'` accesses are needed. This is not strictly
-necessary but if features have missing crucial columns like `highway` or `natural`,
-theys will just be ignored in the sql.
-This can all be summarized in a `.style` file for osm2pgsql; but applying it
-would require a reimport: not the point of this project. A description
-of all needed columns is in the [run.py](run.py) driver, `need_columns` and `aliases`.
+of database columns and `tags->'colname'` accesses are needed, and `tags` will be
+the fallback if the column does not exist. A description
+of all needed columns is in the [run.py](run.py) driver: `need_columns` and `aliases` variables.
 
-* Tables `water_polygons` and `simplified_water_polygons` exist and hold static data,
+* Need to import some additional static data
+[at this point](#load-natural-earth-data),
+Natural Earth tables `ne_10m_*`, `ne_50m_*`, `ne_110m_*`.
+The already existing `ne_110m_admin_0_boundary_lines_land` will be overwritten with
+the geometry column name `way` (mapnik raster rendering default).
+
+* Table `water_polygons` exists and holds static data,
   as imported for use in the rendering pipeline
 * Tables `*_point`, `*_line` and `*_polygon` exist,
  and you have these permissions:
@@ -72,7 +75,7 @@ the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 * Your data is in english, if you imported custom data in german for example, `'attraktion'` in the
   column `tourismus` will **not** be recognized as a `tourism=attraction` and be ignored.
   Feature names are obviously recognized, but using `nein` and `ja` instead of `no` and `yes` for
-  boolean values like `indoor` is not planned for and will fallback to `NULL` or false.
+  boolean values like `indoor` is not planned for, and will fallback to `NULL` or false.
 
 
 # Status
@@ -81,21 +84,23 @@ the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 
 Zoom range|Server usability|Client usability
 ---|---|---
-0-3|only `mktiles.py`, multiple minutes/tile at least|between 500KB/tile and ~1500KB/tile: usable
-4-5|only `mktiles.py`, multiple minutes/tile at least|around 1MB/tile but can be looked at with patience
-7|highly recommend file caching, `mktiles.py` or `pg_tileserv`, multiple minutes/tile|rendering is long because of tilesize ~ 400 to 1500 KB/tile
-6,8-10|recommend file caching because multiple seconds/minutes to render|rendering is responsive, <500KB/tile usually
+0-3|only `mktiles.py`, minutes to hours per tile|between 500KB/tile and ~1500KB/tile: usable
+4-5|only `mktiles.py`, minutes to hours per tile|sometimes 1MB/tile but can be looked at
+6-10|recommend file caching because multiple seconds to minutes to render,`mktiles.py` or `pg_tileserv`|rendering is responsive, <500KB/tile usually
 11-15|live serving possible, size is usually <500KB/tile mapbox recommendation|rendering is responsive
 16-22|no work to do|excellent: no need for network once z15 visited
 
+
+See end of [demo/tile_generation.log](demo/tile_generation.log) file for more detailed and by-layer
+size and extract time statistics. Landarea is counting tiles only by how much land they represent,
+in the middle of the ocean that's 0% but e.g `4/7/5.pbf` covering
+Ireland, UK and France is 19.629% landarea. And `4/11/5.pbf` covering Kazakhstan is 100% landarea.
 
 When it takes multiple minutes per tile, `pg_tileserv` will just timeout.
 And if there is too much data it makes some kind of I/O error
 
 ### Not finished
 
-* some layers' data needs to be queried from multiple different tables (line,point,polygon) where it
-currently only is queried from one
 * `run.py` argparse clean up CLI API
 * `run.py` template configuration: just editing the source is clumsy at best
 * see `TODO` comments in sql
@@ -138,6 +143,7 @@ Dependencies:
 ```
 sudo apt-get install wget python3 sqlite3 libgdal-dev
 ```
+Then
 ```
 bash naturalearth_get.sh 'dbname=gis port=5432'
 ```
@@ -146,7 +152,7 @@ bash naturalearth_get.sh 'dbname=gis port=5432'
 This downloads a 800MB zip of lowzoom Natural Earth data, extracts, converts
 and imports it into the database.
 It creates static tables `ne_10m_*`,`ne_50m_*`,`ne_110m_*` for various
-layers at low zooms, like oceans for `water` or country+province boundaries for `boundary`.
+layers at low zooms, like oceans for layer `water` or country+province boundaries for layer `boundary`.
 
 
 ### Create the SQL functions

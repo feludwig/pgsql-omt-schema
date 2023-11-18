@@ -768,9 +768,7 @@ $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_boundary(bounds_geom geometry, z integer)
-RETURNS setof {{omt_typ_pref}}_boundary
-AS $$
+{% macro query_osmdata_boundary() %}
 WITH osmdata_boundary AS (
   SELECT
 {% if with_osm_id %}
@@ -790,6 +788,52 @@ WITH osmdata_boundary AS (
   admin_level,adm0_l,adm0_r,disputed,disputed_name,claimed_by,maritime,
   ST_SimplifyPreserveTopology(geom,10) AS geom
 FROM osmdata_boundary
+{% endmacro %}
+{% macro union_query_naturalearth_always_boundary() %}
+UNION
+-- ne_10m_admin_0_boundary_lines_maritime_indicator: "indicator" means not the full EEZ,
+--  only a suggestive line between two ambiguously near landmasses... see DK/SE for example
+--  REMOVE the medianline_83 whatever it is...
+--  03<=z all the way to z20
+SELECT
+{% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
+  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
+  0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+FROM ne_10m_admin_0_boundary_lines_maritime_indicator
+WHERE note !~ 'medianLine' AND ST_Intersects(way,bounds_geom) AND z>=03 AND z>=(min_zoom+2)
+UNION
+-- do something with ne_10m_admin_0_disputed_areas
+SELECT
+{% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
+  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
+  1 AS disputed,COALESCE(brk_group,name) AS disputed_name,
+  adm0_a3 AS claimed_by,0 AS maritime,
+  ST_AsMVTGeom(ST_Boundary(way),bounds_geom) AS geom
+  FROM ne_10m_admin_0_disputed_areas
+-- ignore min_zoom column because boundary might show up as undisputed else
+WHERE ST_Intersects(way,bounds_geom)
+{% endmacro %}
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_boundary(bounds_geom geometry, z integer)
+RETURNS setof {{omt_typ_pref}}_boundary
+AS $$
+BEGIN
+  IF z>=07 THEN
+      -- SELECT ... [and then add UNION SELECT other stuff]
+    RETURN QUERY {{query_osmdata_boundary()}}
+      {{union_query_naturalearth_always_boundary()}}
+      ;
+  ELSE -- z<=06
+    RETURN QUERY
+--  00<=z<=02 ne_110m_admin_0_pacific_groupings
+SELECT
+{% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
+  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
+  0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
+  ST_AsMVTGeom(way,bounds_geom) AS geom
+FROM ne_110m_admin_0_pacific_groupings
+WHERE ST_Intersects(way,bounds_geom) AND z<=02
 -- ne_10m_admin_0_boundary_lines_land : [admin_level=2]
 -- 00<=z<=01: ne_110m
 --  02<=z<=04: ne_50m
@@ -836,41 +880,12 @@ SELECT
   GROUP BY({{tbl_name}}.ogc_fid)
   {% endif %}
 {% endfor %}
-UNION
--- ne_10m_admin_0_boundary_lines_maritime_indicator: "indicator" means not the full EEZ,
---  only a suggestive line between two ambiguously near landmasses... see DK/SE for example
---  REMOVE the medianline_83 whatever it is...
---  03<=z all the way to z20
-SELECT
-{% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
-  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
-  0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM ne_10m_admin_0_boundary_lines_maritime_indicator
-WHERE note !~ 'medianLine' AND ST_Intersects(way,bounds_geom) AND z>=03 AND z>=(min_zoom+2)
-UNION
---  00<=z<=02 ne_110m_admin_0_pacific_groupings
-SELECT
-{% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
-  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
-  0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
-FROM ne_110m_admin_0_pacific_groupings
-WHERE ST_Intersects(way,bounds_geom) AND z<=02
-UNION
--- do something with ne_10m_admin_0_disputed_areas
-SELECT
-{% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
-  2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
-  1 AS disputed,COALESCE(brk_group,name) AS disputed_name,
-  adm0_a3 AS claimed_by,0 AS maritime,
-  ST_AsMVTGeom(ST_Boundary(way),bounds_geom) AS geom
-  FROM ne_10m_admin_0_disputed_areas
--- ignore min_zoom column because boundary might show up as undisputed else
-WHERE ST_Intersects(way,bounds_geom)
+{{union_query_naturalearth_always_boundary()}}
 ;
+  END IF;
+END;
 $$
-LANGUAGE 'sql' STABLE PARALLEL SAFE;
+LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_housenumber(bounds_geom geometry,z integer)
 RETURNS setof {{omt_typ_pref}}_housenumber
@@ -1973,26 +1988,25 @@ GROUP BY (class,intermittent,brunnel);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry, z integer)
-RETURNS setof {{omt_typ_pref}}_water
-AS $$
+
+{% macro query_osmdata_water() %}
 WITH osmdata_water AS (
   SELECT * FROM {{omt_func_pref}}_post_agg_water(bounds_geom,z)
   WHERE z>=04)
 SELECT * FROM osmdata_water
-{% for z_cond,tbl_name in (
-  ('z<=01','ne_110m_ocean'),
-  ('z>=02 AND z<=04','ne_50m_ocean'),
-  ('z>=05 AND z<=06','ne_10m_ocean'),
-  ) %}
+{% endmacro %}
+{% macro union_query_naturalearth_ocean(tbl_name,with_union=True) %}
+{% if with_union %}
 UNION
+{% endif %}
 SELECT
 {% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
   'ocean' AS class,0 AS intermittent,NULL AS brunnel,
   ST_AsMVTGeom(way,bounds_geom) AS geom
   FROM {{tbl_name}}
-  WHERE ST_Intersects(way,bounds_geom) AND {{z_cond}}
-{% endfor %}
+  WHERE ST_Intersects(way,bounds_geom)
+{% endmacro %}
+{% macro union_query_water_polygons() %}
 UNION
 SELECT
 {% if with_osm_id %} 'wt_polygs' AS osm_id, {% endif %}
@@ -2001,9 +2015,35 @@ SELECT
   NULL AS brunnel,ST_SimplifyPreserveTopology(
     ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
     10) AS geom
-FROM water_polygons WHERE ST_Intersects(way,bounds_geom) AND z>=07;
+FROM water_polygons WHERE ST_Intersects(way,bounds_geom) AND z>=07
+{% endmacro %}
+
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water(bounds_geom geometry, z integer)
+RETURNS setof {{omt_typ_pref}}_water
+AS $$
+BEGIN
+  IF z>=07 THEN
+    RETURN QUERY
+      {{query_osmdata_water()}}
+      {{union_query_water_polygons()}};
+  ELSIF z>=05 AND z<=06 THEN
+    RETURN QUERY
+      {{query_osmdata_water()}}
+      {{union_query_naturalearth_ocean('ne_10m_ocean')}};
+  ELSIF z=04 THEN
+    RETURN QUERY {{ query_osmdata_water()}};
+      {{query_osmdata_water()}}
+      {{union_query_naturalearth_ocean('ne_50m_ocean')}};
+  ELSIF z>=02 AND z<=03 THEN
+    RETURN QUERY
+      {{union_query_naturalearth_ocean('ne_50m_ocean',with_union=False)}};
+  ELSE
+    RETURN QUERY
+    {{union_query_naturalearth_ocean('ne_110m_ocean',with_union=False)}};
+  END IF;
+END;
 $$
-LANGUAGE 'sql' STABLE PARALLEL SAFE;
+LANGUAGE 'plpgsql' STABLE PARALLEL SAFE;
 
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_collect_all(z integer, x integer, y integer)

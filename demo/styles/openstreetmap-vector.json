@@ -3542,6 +3542,54 @@
       ]
     },
     {
+      "id": "tunnel_rail_minor",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "layout": {
+        "visibility": "visible"
+      },
+      "paint": {
+        "line-color": "rgba(129, 129, 129, 1)",
+        "line-width": {
+          "base": 1.4,
+          "stops": [
+            [
+              12,
+              0.8
+            ],
+            [
+              15,
+              1.2
+            ],
+            [
+              20,
+              4
+            ]
+          ]
+        },
+        "line-dasharray": [
+          5,
+          3
+        ]
+      },
+      "metadata": {},
+      "filter": [
+        "all",
+        [
+          "==",
+          "brunnel",
+          "tunnel"
+        ],
+        [
+          "in",
+          "subclass",
+          "tram",
+          "light_rail"
+        ]
+      ]
+    },
+    {
       "id": "tunnel_major_rail_hatching",
       "type": "line",
       "source": "openmaptiles",

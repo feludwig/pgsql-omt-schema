@@ -307,6 +307,14 @@ SELECT CASE
 $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
+CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_landcover_simplified(way geometry)
+RETURNS geometry
+AS $$
+  WITH dp(g) AS (SELECT (ST_Dump(way)).geom)
+  SELECT ST_Union(ST_BuildArea(ST_ExteriorRing(dp.g))) FROM dp;
+$$
+LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
+
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_text_to_int_null(data text) RETURNS integer
 AS $$
 SELECT CASE
@@ -561,7 +569,8 @@ SELECT
       'saltern', 'tidalflat', 'saltmarsh', 'mangrove' ) THEN 'wetland'
     WHEN subclass IN ('beach', 'sand', 'dune' ) THEN 'sand'
   END ) AS class,subclass,
-  ST_SimplifyPreserveTopology(ST_AsMVTGeom(way,bounds_geom),10) AS geom
+  ST_SimplifyPreserveTopology(ST_AsMVTGeom(way,bounds_geom),
+    CASE WHEN z<=09 THEN 10 ELSE 5 END) AS geom
 FROM (SELECT
 {% if with_osm_id %}
   array_to_string((array_agg(DISTINCT CASE
@@ -578,17 +587,17 @@ FROM (SELECT
         'saltmarsh','mangrove') THEN {{polygon.wetland_v}}
       ELSE NULL
     END ) AS subclass,
-  ST_ExteriorRing(ST_UnaryUnion(unnest(ST_ClusterIntersecting(CASE
+  ST_UnaryUnion(unnest(ST_ClusterIntersecting(CASE
         WHEN z>=11 THEN way
         WHEN z=10 THEN ST_Buffer(way,30)
-        WHEN z=09 THEN ST_Buffer(way,60)
-        WHEN z=08 THEN ST_Buffer(way,120)
-        WHEN z=07 THEN ST_Buffer(way,250)
-        WHEN z=06 THEN ST_Buffer(way,500)
-        WHEN z=05 THEN ST_Buffer(way,1e3)
-        WHEN z=04 THEN ST_Buffer(way,2.5e3)
+        WHEN z=09 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,60))
+        WHEN z=08 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,120))
+        WHEN z=07 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,250))
+        WHEN z=06 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,500))
+        WHEN z=05 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,1e3))
+        WHEN z=04 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,2e3))
         ELSE NULL
-    END)))) AS way
+    END))) AS way
   FROM {{polygon.table_name}}
   WHERE ({{polygon.landuse_v}} IN ('allotments','farm','farmland','orchard','plant_nursery','vineyard',
     'grass','grassland','meadow','forest','village_green','recreation_ground')

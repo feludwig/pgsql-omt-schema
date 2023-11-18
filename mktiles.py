@@ -298,12 +298,12 @@ class Writer(threading.Thread) :
         else :
             out_data=list(result[0].values())[0]
 
-        if not os.path.exists(f'{outdir}/{z}/{x}') :
-            os.makedirs(f'{outdir}/{z}/{x}',exist_ok=True)
         tot_t=time.time()-st_t
-        dest_fn=f'{outdir}/{z}/{x}/{y}.{format}'
         while True :
+            dest_fn=f'{outdir}/{z}/{x}/{y}.{format}'
             try :
+                if not os.path.exists(f'{outdir}/{z}/{x}') :
+                    os.makedirs(f'{outdir}/{z}/{x}',exist_ok=True)
                 with open(dest_fn,'wb') as f:
                     bs_written=f.write(out_data)
                 break

@@ -235,7 +235,7 @@ CREATE TYPE {{omt_typ_pref}}_park AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_place AS (
-{% if with_osm_id %} osm_id text, {% endif %}
+{% if place_with_osm_id %} osm_id text, {% endif %}
   name text,
   {{name_columns_typ}}
   capital integer,
@@ -246,7 +246,7 @@ CREATE TYPE {{omt_typ_pref}}_place AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_poi AS (
-{% if with_osm_id %} osm_id text, {% endif %}
+{% if poi_with_osm_id %} osm_id text, {% endif %}
   name text,
   {{name_columns_typ}}
   class text,
@@ -260,7 +260,8 @@ CREATE TYPE {{omt_typ_pref}}_poi AS (
 );
 
 CREATE TYPE {{omt_typ_pref}}_water_merged AS (
-{% if with_osm_id %} osm_id text, {% endif %}
+  -- needed for get_lakeline lookup
+  osm_id bigint,
   name text,
   {{name_columns_typ}}
   class text,
@@ -368,7 +369,7 @@ $$
 LANGUAGE 'sql' IMMUTABLE PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION {{omt_func_pref}}_get_lakeline(way geometry,
-    test_id bigint,test_typ char(1)) RETURNS geometry
+    test_id bigint) RETURNS geometry
 AS $$
 -- INPUT: way a polygon of a lake, or river
 -- OUTPUT: a lakeline, to use for placong text on the polygon.
@@ -383,9 +384,7 @@ AS $$
 --    FROM b WHERE sum>1)
 --SELECT ST_MakeLine(geom) FROM c;
 BEGIN
-IF (SELECT count(*) FROM lake_centerline WHERE osm_id=-test_id)!=0 AND test_typ='r' THEN
-  RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=-test_id);
-ELSIF (SELECT count(*) FROM lake_centerline WHERE osm_id=test_id)!=0 AND test_typ='w' THEN
+IF (SELECT count(*) FROM lake_centerline WHERE osm_id=test_id)!=0 THEN
   RETURN (SELECT l.way FROM lake_centerline AS l WHERE l.osm_id=test_id);
 ELSIF NOT ST_Intersects(way,ST_Buffer(
           ST_Transform(ST_SetSRID(ST_GeomFromText('LINESTRING(-180 89.999, -180 -89.999)'),4326),3857),
@@ -458,7 +457,7 @@ SELECT
         WHEN z=06 THEN ST_Buffer(way,1e3)
         ELSE NULL
     END)
-  ))),bounds_geom),10) AS geom
+  ))),bounds_geom {{bounds_geom_options}}),10) AS geom
 FROM {{polygon.table_name}}
 WHERE ({{polygon.landuse_v}} IN ('railway','cemetery','miltary','quarry','residential','commercial',
       'industrial','garages','retail')
@@ -492,7 +491,7 @@ SELECT
       ELSE 'other' -- remove any NULLs
     END) AS class,
     iata,icao,{{omt_func_pref}}_text_to_int_null(ele) AS ele,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
 FROM (
   SELECT
 {% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
@@ -521,7 +520,7 @@ AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   ref,class,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
 FROM (
   SELECT
 {% if with_osm_id %} ('n'||{{point.osm_id_v}}) AS osm_id, {% endif %}
@@ -569,7 +568,7 @@ SELECT
       'saltern', 'tidalflat', 'saltmarsh', 'mangrove' ) THEN 'wetland'
     WHEN subclass IN ('beach', 'sand', 'dune' ) THEN 'sand'
   END ) AS class,subclass,
-  ST_SimplifyPreserveTopology(ST_AsMVTGeom(way,bounds_geom),
+  ST_SimplifyPreserveTopology(ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}),
     CASE WHEN z<=09 THEN 10 ELSE 5 END) AS geom
 FROM (SELECT
 {% if with_osm_id %}
@@ -645,7 +644,7 @@ SELECT {{omt_func_pref}}_text_to_real_null({{polygon.height_v}}) AS render_heigh
     WHEN {{polygon.building_part_v}} IS NULL THEN true
     WHEN {{polygon.building_part_v}} IN ('no') THEN false
     ELSE NULL END) AS hide_3d,
-  ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+  ST_AsMVTGeom({{polygon.way_v}},bounds_geom {{bounds_geom_options}}) AS geom
 FROM {{polygon.table_name}}
 WHERE {{polygon.building_e}}
   AND (NOT {{polygon.location_v}} ~ 'underground' OR {{polygon.location_ne}})
@@ -667,7 +666,7 @@ SELECT
   name,{{name_columns_aggregate_run}} class,
   (row_number() OVER (ORDER BY sum(way_area) DESC))::int AS rank,
   ST_SimplifyPreserveTopology(
-    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom {{bounds_geom_options}}),
    8) AS geom
 FROM (
   SELECT
@@ -702,7 +701,7 @@ AS $$
 SELECT
 {% if with_osm_id %} osm_id, {% endif %}
   name, {{name_columns_subquery_propagate}} class,ele,rank,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
 FROM (
   SELECT
   {% if with_osm_id %} osm_id, {% endif %}
@@ -788,7 +787,7 @@ WITH osmdata_boundary AS (
     disputed,disputed_name,claimed_by,maritime,
     ST_AsMVTGeom(
       ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2)),
-      bounds_geom) AS geom
+      bounds_geom {{bounds_geom_options}}) AS geom
   FROM {{omt_func_pref}}_post_agg_boundary(bounds_geom,z)
   WHERE z>=07
   GROUP BY(admin_level,disputed,disputed_name,claimed_by,maritime)
@@ -808,7 +807,7 @@ SELECT
 {% if with_osm_id %} 'ne_'||(ne_id::text) AS osm_id, {% endif %}
   2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
   0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
 FROM ne_10m_admin_0_boundary_lines_maritime_indicator
 WHERE note !~ 'medianLine' AND ST_Intersects(way,bounds_geom) AND z>=03 AND z>=(min_zoom+2)
 UNION
@@ -818,7 +817,7 @@ SELECT
   2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
   1 AS disputed,COALESCE(brk_group,name) AS disputed_name,
   adm0_a3 AS claimed_by,0 AS maritime,
-  ST_AsMVTGeom(ST_Boundary(way),bounds_geom) AS geom
+  ST_AsMVTGeom(ST_Boundary(way),bounds_geom {{bounds_geom_options}}) AS geom
   FROM ne_10m_admin_0_disputed_areas
 -- ignore min_zoom column because boundary might show up as undisputed else
 WHERE ST_Intersects(way,bounds_geom)
@@ -840,7 +839,7 @@ SELECT
 {% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
   2 AS admin_level,NULL AS adm0_l,NULL AS adm0_r,
   0 AS disputed,NULL AS disputed_name,NULL AS claimed_by,1 AS maritime,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
 FROM ne_110m_admin_0_pacific_groupings
 WHERE ST_Intersects(way,bounds_geom) AND z<=02
 -- ne_10m_admin_0_boundary_lines_land : [admin_level=2]
@@ -879,7 +878,7 @@ SELECT
   {% else %}
     0 AS maritime,
   {% endif %}
-  ST_AsMVTGeom({{tbl_name}}.way,bounds_geom) AS geom
+  ST_AsMVTGeom({{tbl_name}}.way,bounds_geom {{bounds_geom_options}}) AS geom
   FROM {{tbl_name}}
   {% if do_maritime_test != '' %}
   , {{do_maritime_test}} AS ocean
@@ -902,7 +901,7 @@ AS $$
 SELECT housenumber,
   ST_AsMVTGeom((CASE
       WHEN tablefrom = 'point' THEN way
-      ELSE ST_PointOnSurface(way) END),bounds_geom) AS geom
+      ELSE ST_PointOnSurface(way) END),bounds_geom {{bounds_geom_options}}) AS geom
 FROM (
   SELECT {{line.housenumber}},{{line.way}},'line' AS tablefrom FROM {{line.table_name}}
   UNION ALL
@@ -1043,7 +1042,7 @@ FROM (
         'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
         'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
     END) AS surface,
-    ST_AsMVTGeom({{line.way_v}},bounds_geom) AS geom
+    ST_AsMVTGeom({{line.way_v}},bounds_geom {{bounds_geom_options}}) AS geom
   FROM {{line.table_name}}
   WHERE (
     {{line.railway_v}} IN ('rail','narrow_gauge','preserved','funicular','subway','light_rail',
@@ -1139,7 +1138,7 @@ FROM (
         'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
         'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
     END) AS surface,
-    ST_AsMVTGeom({{polygon.way_v}},bounds_geom) AS geom
+    ST_AsMVTGeom({{polygon.way_v}},bounds_geom {{bounds_geom_options}}) AS geom
   FROM {{polygon.table_name}}
   WHERE (
     {{polygon.man_made_v}} IN ('bridge','pier')
@@ -1208,7 +1207,7 @@ FROM (
         'grass','grass_paver','grass_paved','gravel','gravel_turf','ground',
         'ice','mud','pebblestone','salt','sand','snow','woodchips') THEN 'unpaved'
     END) AS surface,
-    ST_AsMVTGeom({{point.way_v}},bounds_geom) AS geom
+    ST_AsMVTGeom({{point.way_v}},bounds_geom {{bounds_geom_options}}) AS geom
   FROM {{point.table_name}}
   WHERE (z>=10) AND {{point.highway_v}} IN ('motorway_junction')
     AND ST_Intersects({{point.way_v}},bounds_geom)
@@ -1441,7 +1440,7 @@ RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
 SELECT name, {{name_columns_aggregate_run}} class,
   (CASE WHEN z<=10 THEN NULL ELSE brunnel END) AS brunnel,intermittent,
-  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom) AS geom
+  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom {{bounds_geom_options}}) AS geom
 FROM (
   SELECT {{line.name}},{{line.tags}},{{line.waterway_v}} AS class,
     (CASE
@@ -1471,7 +1470,7 @@ RETURNS setof {{omt_typ_pref}}_place
 AS $$
 WITH place_toomuch_cities AS (
   SELECT
-{% if with_osm_id %} (CASE
+{% if place_with_osm_id %} (CASE
       WHEN tablefrom='point' THEN 'n'||osm_id
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
       WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
@@ -1487,7 +1486,7 @@ WITH place_toomuch_cities AS (
       WHEN tablefrom='polygon' THEN ST_PointOnSurface(way) END) AS way
   FROM (
     SELECT
-{% if with_osm_id %} {{polygon.osm_id}}, {% endif %}
+{% if place_with_osm_id %} {{polygon.osm_id}}, {% endif %}
       {{polygon.tags}},
       {{polygon.name}},{{polygon.place_v}} AS class,
       COALESCE({{polygon.iso3166_1_alpha2_v}},{{polygon.iso3166_1_v}},
@@ -1503,7 +1502,7 @@ WITH place_toomuch_cities AS (
     WHERE {{polygon.place_v}} IN ('island')
     UNION ALL
     SELECT
-{% if with_osm_id %} {{point.osm_id}}, {% endif %}
+{% if place_with_osm_id %} {{point.osm_id}}, {% endif %}
       {{point.tags}},
       {{point.name}},{{point.place_v}} AS class,
       COALESCE({{point.iso3166_1_alpha2_v}},{{point.iso3166_1_v}},
@@ -1527,22 +1526,22 @@ WITH place_toomuch_cities AS (
 ), place_onlycities AS (
   SELECT * FROM place_toomuch_cities WHERE class IN ('city','town'))
 SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if place_with_osm_id %} osm_id, {% endif %}
     name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
     -- add rank only at the end...
     (ntile(9) OVER (ORDER BY score DESC))::int+1 AS rank,geom
 FROM (
   SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if place_with_osm_id %} osm_id, {% endif %}
     name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
-    score,ST_AsMVTGeom(way,bounds_geom) AS geom
+    score,ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
   FROM place_nocities
   UNION (
 -- some cities are big enough to be shown above provinces. but weed out the small ones
   SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if place_with_osm_id %} osm_id, {% endif %}
     name, {{name_columns_subquery_propagate}} capital,class,iso_a2,
-    score,ST_AsMVTGeom(way,bounds_geom) AS geom
+    score,ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
   FROM place_onlycities ORDER BY score DESC
   LIMIT (CASE WHEN (z>10) THEN 99999999
     WHEN (z=10) THEN 250
@@ -1600,7 +1599,7 @@ AS $$
 -- additional source:
 -- https://wiki.openstreetmap.org/wiki/OpenStreetMap_Carto/Symbols#Shops_and_services
 SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if poi_with_osm_id %} osm_id, {% endif %}
   name,{{name_columns_subquery_propagate}} class,subclass,
   -- WARNING: not the final rank value, intermediary result only
   (row_number() OVER (ORDER BY ((CASE
@@ -1613,7 +1612,7 @@ SELECT
 FROM
 (SELECT name,
   {{name_columns_subquery_propagate}}
-{% if with_osm_id %} osm_id, {% endif %}
+{% if poi_with_osm_id %} osm_id, {% endif %}
 	(CASE WHEN
 		subclass IN ('accessories','antiques','beauty','bed','boutique','camera',
 			'carpet','charity','chemist','coffee','computer','convenience','copyshop',
@@ -1681,7 +1680,7 @@ FROM
   geom
 	FROM (SELECT name,
     {{name_columns_run}}
-{% if with_osm_id %} osm_id, {% endif %}
+{% if poi_with_osm_id %} osm_id, {% endif %}
 		(CASE WHEN
 		waterway IN ('dock')
 			THEN waterway
@@ -1768,10 +1767,10 @@ FROM
     amenity,"natural",man_made,
     start_date_year,score,information,
     ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
-      WHEN tablefrom='polygon' THEN ST_PointOnSurface(way) END),bounds_geom) AS geom
+      WHEN tablefrom='polygon' THEN ST_PointOnSurface(way) END),bounds_geom {{bounds_geom_options}}) AS geom
 	FROM (
     SELECT
-{% if with_osm_id %} 'n'||{{point.osm_id_v}} AS osm_id, {% endif %}
+{% if poi_with_osm_id %} 'n'||{{point.osm_id_v}} AS osm_id, {% endif %}
       {{point.tags}}, -- for name languages
       {{point.name}},{{point.waterway}},{{point.building}},{{point.shop}},
       {{point.highway}},{{point.leisure}},{{point.historic}},
@@ -1788,7 +1787,7 @@ FROM
     FROM {{point.table_name}}
     UNION ALL
     SELECT
-{% if with_osm_id %}
+{% if poi_with_osm_id %}
   (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
     WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
 {% endif %}
@@ -1882,7 +1881,7 @@ RETURNS setof {{omt_typ_pref}}_poi
 AS $$
 -- The rank copmutation and documentation are very unclear and how they are now could be better
 SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if poi_with_osm_id %} osm_id, {% endif %}
   name,{{name_columns_subquery_propagate}} class,subclass,
 {% if same_rank_poi_high_zooms %} (CASE WHEN z>=15 THEN 30::int ELSE {%endif%}
   (row_number() OVER (ORDER BY rank ASC))::int
@@ -1890,7 +1889,7 @@ SELECT
   agg_stop,level,layer,indoor,geom
 FROM (
   SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if poi_with_osm_id %} osm_id, {% endif %}
     name,{{name_columns_subquery_propagate}} class,subclass,rank,
     (row_number() OVER (PARTITION BY(class)
       ORDER BY rank ASC)) AS inclass_rank,
@@ -1905,14 +1904,11 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_pre_agg_water_merged(bounds_geom ge
 RETURNS setof {{omt_typ_pref}}_water_merged
 AS $$
 SELECT
+-- include osm_id for get_lakeline lookup
   osm_id,name, {{name_columns_run}} class,intermittent,brunnel,way
 FROM (
   SELECT
-{% if with_osm_id %}
-  (CASE WHEN {{polygon.osm_id_v}}<0 THEN 'r'||(-{{polygon.osm_id_v}})
-    WHEN {{polygon.osm_id_v}}>0 THEN 'w'||{{polygon.osm_id_v}} END) AS osm_id,
-{% endif %}
-    {{polygon.name}},{{polygon.tags}},
+    {{polygon.osm_id}},{{polygon.name}},{{polygon.tags}},
     (CASE
       WHEN {{polygon.water_v}} IN ('river','lake','ocean') THEN {{polygon.water_v}}
       WHEN {{polygon.waterway_v}} IN ('dock') THEN 'dock'
@@ -1959,13 +1955,15 @@ CREATE OR REPLACE FUNCTION {{omt_func_pref}}_water_name(bounds_geom geometry, z 
 RETURNS setof {{omt_typ_pref}}_water_name
 AS $$
 SELECT
-{% if with_osm_id %} osm_id, {% endif %}
+{% if with_osm_id %}
+  (CASE WHEN osm_id<0 THEN 'r'||(-osm_id) WHEN osm_id>0 THEN 'w'||osm_id END) AS osm_id,
+{% endif %}
   name, {{name_columns_subquery_propagate}} class,intermittent,
   -- openmaptiles uses https://github.com/openmaptiles/osm-lakelines basically a docker wrapper,
   -- of https://github.com/ungarj/label_centerlines/blob/master/label_centerlines/_src.py
   ST_AsMVTGeom(
-    {{omt_func_pref}}_get_lakeline(way,substr(osm_id,2)::bigint,substr(osm_id,1,1)),
-    bounds_geom) AS geom
+    {{omt_func_pref}}_get_lakeline(way,osm_id),
+    bounds_geom {{bounds_geom_options}}) AS geom
 FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
 WHERE class IN ('ocean','lake','sea') AND name IS NOT NULL;
 $$
@@ -1982,7 +1980,7 @@ SELECT
 {% endif %}
   class,intermittent,brunnel,
   ST_Simplify(
-    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom {{bounds_geom_options}}),
     -- at z04~z07, some water polygons sometimes make horrible triangles
     --  (always pointing to the right somehow), and the ST_SimplifyPreserveTopology
     -- threshold can make them go away. But setting it too low means more data.
@@ -2011,7 +2009,7 @@ UNION
 SELECT
 {% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
   'ocean' AS class,0 AS intermittent,NULL AS brunnel,
-  ST_AsMVTGeom(way,bounds_geom) AS geom
+  ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}) AS geom
   FROM {{tbl_name}}
   WHERE ST_Intersects(way,bounds_geom)
 {% endmacro %}
@@ -2022,7 +2020,7 @@ SELECT
   'ocean' AS class,0 AS intermittent,
   -- the _post_agg_water has already simplified
   NULL AS brunnel,ST_SimplifyPreserveTopology(
-    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom),
+    ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom {{bounds_geom_options}}),
     10) AS geom
 FROM water_polygons WHERE ST_Intersects(way,bounds_geom) AND z>=07
 {% endmacro %}

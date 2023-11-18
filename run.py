@@ -487,7 +487,11 @@ def print_table(data,headers) :
 TEMPLATE_VARS={
     # include osm_ids in some layers: useful for
     # map.on('click') looking up specific features
-    'with_osm_id':True,
+    'with_osm_id':False,
+    #specific to layer poi, shops restaurants bus_stops
+    'poi_with_osm_id':True,
+    #specific to layer place villages cities countries
+    'place_with_osm_id':True,
     # transportation aggregates roads, remove osm_id if they are
     # "uninteresting", heuristic: for now just when name IS NULL.
     # only has an effect if with_osm_id=True
@@ -519,6 +523,7 @@ TEMPLATE_VARS={
     'lake_table_name':'lake_centerline',
     # whether to add the "cycleway" column to layer "transportation". experimental and not in omt spec
     'transportation_with_cycleway':False,
+    'bounds_geom_options':',extent=>4096,buffer=>(CASE WHEN z>=14 THEN 128 ELSE 64 END)',
 }
 if TEMPLATE_VARS['make_name_columns_function'] :
     # with comma the end

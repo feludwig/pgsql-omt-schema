@@ -9433,6 +9433,45 @@
       ]
     },
     {
+      "id": "water_name_ocean",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "water_name",
+      "layout": {
+        "text-font": [
+          "Noto Sans Italic"
+        ],
+        "text-size": 11,
+        "text-field": "{name:latin}\n{name:nonlatin}",
+        "visibility": "visible",
+        "text-max-width": 5,
+        "symbol-spacing": 350,
+        "text-letter-spacing": 0.2,
+        "text-rotation-alignment": "map",
+        "text-size": ["case",["in",["get","class"],"ocean"],14,10]
+      },
+      "paint": {
+        "text-color": "rgba(76, 125, 173, 1)",
+        "text-halo-color": "rgba(255,255,255,0)",
+        "text-halo-width": 1.5
+      },
+      "metadata": {},
+      "filter": [
+        "all",
+        [
+          "==",
+          "$type",
+          "Point"
+        ],
+        [
+          "in",
+          "class",
+          "ocean",
+          "sea"
+        ]
+      ]
+    },
+    {
       "id": "housenumber",
       "type": "symbol",
       "source": "openmaptiles",

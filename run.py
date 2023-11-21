@@ -163,6 +163,7 @@ aliases={
         'iso3166_1_alpha2':'ISO3166-1:alpha2',
         'iso3166_1':'ISO3166-1',
         'mtb_scale':'mtb:scale',
+        'name_en':'name:en',
     },
     'line':{
         'housenumber':'addr:housenumber',
@@ -197,7 +198,7 @@ need_columns={
         'capital', 'information','network','surface','foot',
         'horse','bicycle','toll','oneway','ramp','bridge',
         'tunnel','ford','service','expressway','mtb_scale',
-        'country_code_iso3166_1_alpha_2',
+        'country_code_iso3166_1_alpha_2','name_en',
 
         'way', 'tags', 'osm_id',
     ),
@@ -529,6 +530,7 @@ if TEMPLATE_VARS['make_name_columns_function'] :
     # with comma the end
     ns=[f'name_{iso2},' for iso2 in name_columns_languages]
     nlls=[f'NULL AS name_{iso2},' for iso2 in name_columns_languages]
+    annl=[f'name_{iso2} IS NOT NULL' for iso2 in name_columns_languages]
     ts=[f'name_{iso2} text,' for iso2 in name_columns_languages]
     # ADD at the end
     fns=[f"(tags->'name:{iso2}') AS name_{iso2}," for iso2 in name_columns_languages]
@@ -543,6 +545,7 @@ if TEMPLATE_VARS['make_name_columns_function'] :
     TEMPLATE_VARS['name_columns_subquery_propagate']=''.join(ns)
     TEMPLATE_VARS['name_columns_subquery_aggregate_propagate']=''.join(agsqns)
     TEMPLATE_VARS['name_columns_typ']=''.join(ts)
+    TEMPLATE_VARS['name_columns_any_notnull']=' OR '.join(annl)
 else :
     # avoid having to write {% if make_name_columns_function %}
     #   {{name_columns_run}} {% endif %} every time...
@@ -552,6 +555,7 @@ else :
     TEMPLATE_VARS['name_columns_aggregate_run']=''
     TEMPLATE_VARS['name_columns_subquery_propagate']=''
     TEMPLATE_VARS['name_columns_subquery_aggregate_propagate']=''
+    TEMPLATE_VARS['name_columns_any_notnull']=' false '
 
 
 if __name__=='__main__' :

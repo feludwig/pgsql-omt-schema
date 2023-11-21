@@ -267,7 +267,8 @@ CREATE TYPE {{omt_typ_pref}}_water_merged AS (
   class text,
   intermittent integer,
   brunnel text,
-  way geometry -- exceptionally, return the full geometry way, NOT the not yet truncated ST_AsMVTGeom()
+  way geometry, -- exceptionally, return the full geometry way, NOT the not yet truncated ST_AsMVTGeom()
+  tablefrom text --get_lakeline does not work on node osm_ids
 );
 
 CREATE TYPE {{omt_typ_pref}}_water AS (
@@ -569,7 +570,10 @@ SELECT
     WHEN subclass IN ('beach', 'sand', 'dune' ) THEN 'sand'
   END ) AS class,subclass,
   ST_SimplifyPreserveTopology(ST_AsMVTGeom(way,bounds_geom {{bounds_geom_options}}),
-    CASE WHEN z<=09 THEN 10 ELSE 5 END) AS geom
+    CASE WHEN z<=09 THEN 10 WHEN z=05 THEN 15 WHEN z=04 THEN 20
+    WHEN z=03 THEN 25
+    WHEN z<=02 THEN 30
+    ELSE 5 END) AS geom
 FROM (SELECT
 {% if with_osm_id %}
   array_to_string((array_agg(DISTINCT CASE
@@ -592,9 +596,11 @@ FROM (SELECT
         WHEN z=09 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,60))
         WHEN z=08 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,120))
         WHEN z=07 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,250))
-        WHEN z=06 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,500))
-        WHEN z=05 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,1e3))
-        WHEN z=04 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,2e3))
+        WHEN z=06 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,600))
+        WHEN z=05 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,1.2e3))
+        WHEN z=04 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,3e3))
+        WHEN z=03 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,7e3))
+        WHEN z=02 THEN {{omt_func_pref}}_get_landcover_simplified(ST_Buffer(way,16e3))
         ELSE NULL
     END))) AS way
   FROM {{polygon.table_name}}
@@ -615,7 +621,11 @@ FROM (SELECT
     (z=07 AND {{polygon.way_area_v}}>1.8e6) OR
       -- polar regions! srid=8857 is area-preserving and area_8857~=area_3857 at EQUATOR ONLY
       -- for performance: check way_area a tenth smaller too
-    (z>=04 AND {{polygon.way_area_v}}>1e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>1.2e6)
+    (z=06 AND {{polygon.way_area_v}}>800e2 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>800e3) OR
+    (z=05 AND {{polygon.way_area_v}}>1e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>1.7e6) OR
+    (z=04 AND {{polygon.way_area_v}}>2e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>2.1e6) OR
+    (z=03 AND {{polygon.way_area_v}}>4e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>4e6) OR
+    (z=02 AND {{polygon.way_area_v}}>7e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>7e6)
     -- show nothing at lower zooms
   )
   GROUP BY(subclass)
@@ -1516,7 +1526,8 @@ WITH place_toomuch_cities AS (
       OR (z>=10 AND z<12 AND {{omt_func_pref}}_get_place_multiplier(class)>3)
       OR (z>=07 AND z<10 AND {{omt_func_pref}}_get_place_multiplier(class)>6)
       OR (z>=04 AND z<07 AND {{omt_func_pref}}_get_place_multiplier(class)>6) -- city+town include all, other filtering mechanism below...
-      OR (z>=02 AND z<04 AND {{omt_func_pref}}_get_place_multiplier(class)>9)
+      OR (z>=03 AND z<04 AND {{omt_func_pref}}_get_place_multiplier(class)>9)
+      --only countries or continents
       OR ({{omt_func_pref}}_get_place_multiplier(class)>10))
 ), place_nocities AS (
   SELECT * FROM place_toomuch_cities WHERE class NOT IN ('city','town')
@@ -1902,7 +1913,7 @@ RETURNS setof {{omt_typ_pref}}_water_merged
 AS $$
 SELECT
 -- include osm_id for get_lakeline lookup
-  osm_id,name, {{name_columns_run}} class,intermittent,brunnel,way
+  osm_id,name, {{name_columns_run}} class,intermittent,brunnel,way,tablefrom
 FROM (
   SELECT
     {{polygon.osm_id}},{{polygon.name}},{{polygon.tags}},
@@ -1920,7 +1931,7 @@ FROM (
       WHEN {{polygon.bridge_v}} IS NOT NULL AND {{polygon.bridge_v}}!='no' THEN 'bridge'
       WHEN {{polygon.tunnel_v}} IS NOT NULL AND {{polygon.tunnel_v}}!='no' THEN 'tunnel'
     END) AS brunnel,
-    {{polygon.way}}
+    {{polygon.way}}, 'polygon' AS tablefrom
   FROM {{polygon.table_name}}
   WHERE ({{polygon.covered_v}} IS NULL OR {{polygon.covered_v}} != 'yes') AND (
       {{polygon.water_v}} IN ('river','lake') OR {{polygon.waterway_v}} IN ('dock')
@@ -1944,7 +1955,25 @@ FROM (
       (z=03 AND {{polygon.way_area_v}}>4e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>40e6) OR
       (z=02 AND {{polygon.way_area_v}}>5e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>50e6) OR
       (z<=01 AND {{polygon.way_area_v}}>10e6 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>100e6)
-    )) AS foo;
+    )
+  UNION
+  SELECT
+    {{point.osm_id}},
+    -- pacific ocean and others have a name IS NULL because some kind of noname=multiple_languages.
+    -- take name:en as default (and other langs included as usual)
+    COALESCE({{point.name_v}},{{point.name_en_v}}) AS name,{{point.tags}},
+    (CASE
+      WHEN {{point.place_v}} IN ('sea','ocean') THEN {{point.place_v}}
+      WHEN {{point.natural_v}} IN ('bay','strait') THEN {{point.natural_v}}
+    END) AS class,
+    0 AS intermittent,
+    NULL AS brunnel,
+    {{point.way}}, 'point' AS tablefrom
+  FROM {{point.table_name}}
+  WHERE ({{point.place_v}} IN ('sea','ocean')
+      OR {{point.natural_v}} IN ('bay','strait'))
+    AND ST_Intersects({{point.way_v}},bounds_geom)
+  ) AS foo;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1959,10 +1988,22 @@ SELECT
   -- openmaptiles uses https://github.com/openmaptiles/osm-lakelines basically a docker wrapper,
   -- of https://github.com/ungarj/label_centerlines/blob/master/label_centerlines/_src.py
   ST_AsMVTGeom(
-    {{omt_func_pref}}_get_lakeline(way,osm_id),
+    CASE WHEN tablefrom!='point' THEN
+    {{omt_func_pref}}_get_lakeline(way,osm_id)
+    ELSE way END,
     bounds_geom {{bounds_geom_options}}) AS geom
 FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
-WHERE class IN ('ocean','lake','sea') AND name IS NOT NULL;
+WHERE class IN ('ocean','lake','sea') AND (name IS NOT NULL OR {{name_columns_any_notnull}}) AND (
+      (tablefrom='point' AND (z>=03
+          -- only ocean points at z00-z02
+          OR class IN ('ocean'))
+      ) OR
+      (z>=06)
+      OR (z=05 AND ST_Area(ST_Transform(way,8857))>400e6)
+      OR (z=04 AND ST_Area(ST_Transform(way,8857))>800e6)
+      OR (z=03 AND ST_Area(ST_Transform(way,8857))>1.6e7)
+      OR (z=02 AND ST_Area(ST_Transform(way,8857))>3e7));
+    -- no polygon water names below z02
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1985,24 +2026,18 @@ SELECT
     -- sample tiles: 7/110/51 ocean polygons, 6/35/23 and 6/36/23 river Danube
     --  4/0/4 ocean polygons
     CASE WHEN z>=5 THEN 3
-    WHEN z=4 THEN 1
-    ELSE 10 END) AS geom
+    WHEN z<=4 THEN 1 END) AS geom
 FROM {{omt_func_pref}}_pre_agg_water_merged(bounds_geom,z)
+WHERE tablefrom!='point' -- only relevant for water_name layer
 GROUP BY (class,intermittent,brunnel);
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
 
 {% macro query_osmdata_water() %}
-WITH osmdata_water AS (
-  SELECT * FROM {{omt_func_pref}}_post_agg_water(bounds_geom,z)
-  WHERE z>=04)
-SELECT * FROM osmdata_water
+SELECT * FROM {{omt_func_pref}}_post_agg_water(bounds_geom,z)
 {% endmacro %}
-{% macro union_query_naturalearth_ocean(tbl_name,with_union=True) %}
-{% if with_union %}
-UNION
-{% endif %}
+{% macro query_naturalearth_ocean(tbl_name) %}
 SELECT
 {% if with_osm_id %} 'ne_fid'||(ogc_fid::text) AS osm_id, {% endif %}
   'ocean' AS class,0 AS intermittent,NULL AS brunnel,
@@ -2010,8 +2045,7 @@ SELECT
   FROM {{tbl_name}}
   WHERE ST_Intersects(way,bounds_geom)
 {% endmacro %}
-{% macro union_query_water_polygons() %}
-UNION
+{% macro query_water_polygons() %}
 SELECT
 {% if with_osm_id %} 'wt_polygs' AS osm_id, {% endif %}
   'ocean' AS class,0 AS intermittent,
@@ -2028,22 +2062,20 @@ AS $$
 BEGIN
   IF z>=07 THEN
     RETURN QUERY
-      {{query_osmdata_water()}}
-      {{union_query_water_polygons()}};
+      {{query_osmdata_water()}} UNION
+      {{query_water_polygons()}};
   ELSIF z>=05 AND z<=06 THEN
     RETURN QUERY
-      {{query_osmdata_water()}}
-      {{union_query_naturalearth_ocean('ne_10m_ocean')}};
-  ELSIF z=04 THEN
+      {{query_osmdata_water()}} UNION
+      {{query_naturalearth_ocean('ne_10m_ocean')}};
+  ELSIF z>=02 AND z<=04 THEN
     RETURN QUERY
-      {{query_osmdata_water()}}
-      {{union_query_naturalearth_ocean('ne_50m_ocean')}};
-  ELSIF z>=02 AND z<=03 THEN
-    RETURN QUERY
-      {{union_query_naturalearth_ocean('ne_50m_ocean',with_union=False)}};
+      {{query_osmdata_water()}} UNION
+      {{query_naturalearth_ocean('ne_50m_ocean')}};
   ELSE
     RETURN QUERY
-      {{union_query_naturalearth_ocean('ne_110m_ocean',with_union=False)}};
+      {{query_osmdata_water()}} UNION
+      {{query_naturalearth_ocean('ne_110m_ocean')}};
   END IF;
 END;
 $$

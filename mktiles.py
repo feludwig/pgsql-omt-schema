@@ -56,19 +56,26 @@ def gen_zxy_readinput()->typing.Iterator[[int,int,int]] :
         yield (int(z),int(x),int(y))
 
 def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
+    zSpec=None
+    if z.find(':')>=0 :
+        #FORMAT zSpecified:zStart-zEnd with zSpecified<zStart<zEnd OR zSpecified:z
+        zSpec,z=z.split(':')
+        zSpec=int(zSpec)
     if z.find('-')>=0 :
         # z range, x and y are specified for starting zoom!
         zs=list(range(*map(int,z.split('-'))))
+        zSpec=zs[0] if zSpec==None else zSpec
         #inclusive range
         zs.append(zs[-1]+1)
     else :
         zs=[int(z)]
+        zSpec=zs[0] if zSpec==None else zSpec
     if x.find('-')>=0 :
         xs=list(range(*map(int,x.split('-'))))
         #inclusive range
         xs.append(xs[-1]+1)
     elif x=='*' :
-        xs=list(range(2**zs[0]))
+        xs=list(range(2**zSpec))
     else :
         xs=[int(x)]
     if y.find('-')>=0 :
@@ -76,11 +83,11 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
         #inclusive range
         ys.append(ys[-1]+1)
     elif y=='*' :
-        ys=list(range(2**zs[0]))
+        ys=list(range(2**zSpec))
     else :
         ys=[int(y)]
     for z in zs :
-        scale=2**(z-zs[0])
+        scale=2**(z-zSpec)
         for xr in xs :
             for x in range(xr*scale,(xr+1)*scale) :
                 for yr in ys :
@@ -278,7 +285,7 @@ class Writer(threading.Thread) :
                     #need to re-connect to database
                     self.access,self.c=self.get_access_new_cursor()
                 with printer_lock :
-                    print(f'{z:2}/{x}/{y}.{format}\t','failed SQL retrying')
+                    print(f'{z:2}/{x}/{y}.{format}\t','failed SQL',repr(err),'retrying')
                 self.print_notices()
         if not success :
             with printer_lock :

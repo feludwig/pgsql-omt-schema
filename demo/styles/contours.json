@@ -17,11 +17,25 @@
   },
   "layers": [
     {
-      "id": "contours100",
+      "id": "contours200",
+      "maxzoom":10,
       "type": "line",
       "source": "contours",
       "source-layer": "heights",
-      "filter" : ["to-boolean", ["get","height100"]],
+      "filter" : ["==",["%",["get","height"],200],0],
+      "layout": {"line-cap": "round", "visibility": "visible"},
+      "paint": {
+        "line-color": "#9cb197",
+        "line-width": 0.7
+      }
+    },
+    {
+      "id": "contours100",
+      "minzoom":10,
+      "type": "line",
+      "source": "contours",
+      "source-layer": "heights",
+      "filter" : ["==",["%",["get","height"],100],0],
       "layout": {"line-cap": "round", "visibility": "visible"},
       "paint": {
         "line-color": [
@@ -35,16 +49,16 @@
     },
     {
       "id": "contours50",
+      "minzoom":11,
       "type": "line",
       "source": "contours",
       "source-layer": "heights",
-      "filter" : ["to-boolean", ["get","height50"]],
+      "filter" : ["==",["%",["get","height"],50],0],
       "layout": {"line-cap": "round", "visibility": "visible"},
       "paint": {
         "line-color": [
           "step", ["zoom"],
-          "transparent",
-          11, "#9cb197",
+          "#9cb197",
           14, "#747b90"
         ],
         "line-width": 0.6
@@ -52,17 +66,14 @@
     },
     {
       "id": "contours10",
+      "minzoom":14,
       "type": "line",
       "source": "contours",
       "source-layer": "heights",
-      "filter" : ["to-boolean", ["get","height10"]],
+      "filter" : ["==",["%",["get","height"],10],0],
       "layout": {"line-cap": "round", "visibility": "visible"},
       "paint": {
-        "line-color": [
-          "step", ["zoom"],
-          "transparent",
-          14, "#9cb197"
-        ],
+        "line-color": "#9cb197",
         "line-width": 0.5
       }
     }

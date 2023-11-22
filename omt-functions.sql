@@ -1269,7 +1269,8 @@ SELECT
   max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
-  ST_SimplifyPreserveTopology({{geom_agg_run}},15) AS geom
+  ST_SimplifyPreserveTopology({{geom_agg_run}},
+    CASE WHEN z>=07 THEN 15 WHEN z=06 THEN 20 WHEN z=5 THEN 25 END) AS geom
 FROM {{cte_name}}
 GROUP BY(class,subclass)
 {% endfor %}

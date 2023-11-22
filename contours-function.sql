@@ -7,17 +7,14 @@ WITH
   premvt_contours AS (
     SELECT
       height::integer AS height,
-      -- %50!=0 implies %100!=0
-      (height::integer)%10=0 AND (height::integer)%50!=0 AS height10,
-      (height::integer)%50=0 AND (height::integer)%100!=0 AS height50,
-      (height::integer)%100=0 AS height100,
       ST_AsMVTGeom(way,bounds.geom) AS geom
     FROM public.contours, bounds
     WHERE ST_Intersects(way,bounds.geom)
       AND (
         (z>=14 AND (height::integer)%10=0)
         OR (11<=z AND z<14 AND (height::integer)%50=0)
-        OR (9<=z AND z<11 AND (height::integer)%100=0)
+        OR (10<=z AND z<11 AND (height::integer)%100=0)
+        OR (9<=z AND z<10 AND (height::integer)%200=0)
         -- remove everything at lowzooms
       )
   )

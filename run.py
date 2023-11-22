@@ -364,8 +364,9 @@ def parse_indexed_create(sql_script:str,tmpl_defined:dict)->typing.Iterator[typi
 
         for s_from in s_func_body.find_all(sqlglot.expressions.From) :
             t_name=s_from.name #table name
-            t_s=t_name.split('_')[-1]
-            if t_s in ('point','line','polygon','roads'):
+            # do NOT get confused by aa_line CTE, look up exact {}.table_name
+            if t_name in [tmpl_defined[k].table_name for k in ('point','line','polygon','roads') if k in tmpl_defined]:
+                t_s=t_name.split('_')[-1]
                 gt=tmpl_defined[t_s]
                 # extract the WHERE corresponding to this s_from
                 # to create corresponding index on
@@ -600,8 +601,13 @@ if __name__=='__main__' :
         data=c.fetchone()
         print(dict(zip(cols,data)))
         c.execute('COMMIT;')
-    else :
+    elif len(sys.argv)>2 and sys.argv[2]=='--contours' :
+        run_sql_script(c,sql_contours_script)
+        c.execute('COMMIT;')
+    elif len(sys.argv)==1 :
         run_sql_script(c,sql_functions_script)
         print('test tile',[tmpl_defined['test_'+k] for k in 'zxy'])
         print_stats(c)
         c.execute('COMMIT;')
+    else :
+        print('unrecognized options')

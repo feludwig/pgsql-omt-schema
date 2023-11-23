@@ -135,7 +135,7 @@ class Writer(threading.Thread) :
     def get_land_area_pcent(self,z:str,x:str,y:str)->float :
         water_tbl='water_polygons' if int(z)>8 else 'simplified_water_polygons'
         q=f'''WITH a(a) AS (SELECT ST_TileEnvelope(%s,%s,%s))
-            SELECT 1.0-(sum(ST_Area(ST_Intersection(way,a.a)))/ST_Area(a.a))
+            SELECT greatest(0.0,1.0-(sum(ST_Area(ST_Intersection(way,a.a)))/ST_Area(a.a)))
             FROM {water_tbl},a WHERE ST_Intersects(way,a.a) GROUP BY(a.a);'''
         self.c.execute(self.c.mogrify(q,(z,x,y)))
         if self.c.rowcount==0 :
@@ -294,8 +294,10 @@ class Writer(threading.Thread) :
         result=[dict(zip([col.name for col in self.c.description],i)) for i in self.c.fetchall()]
 
         weight=1.0
+        print_additional=''
         if self.with_landarea_stats :
             weight=self.get_land_area_pcent(z,x,y)
+            print_additional+=f'\t{weight*100:>5.1f}% landarea'
         if self.function_returns_stats :
             for line in result :
                 if line['name']=='ALL' :
@@ -315,7 +317,7 @@ class Writer(threading.Thread) :
                     bs_written=f.write(out_data)
                 break
             except PermissionError as err:
-                input(f'{err} on file {dest_fn}, Press enter to retry:')
+                input(f'{err}, press enter to retry:')
         self.total_written[z]+=bs_written
         self.total_count[z]+=1
         self.stats[z]['time'].append(tot_t)
@@ -325,7 +327,8 @@ class Writer(threading.Thread) :
             self.stats[z]['landarea_time'].append(tot_t/weight)
             self.stats[z]['landarea_size'].append(bs_written/weight)
         with printer_lock :
-            print(f'{z:2}/{x}/{y}.{format}\t',bs_written,'bytes\t',round(tot_t,2),'s')
+            displ_fn=f'{z:2}/{x}/{y}.{format}'
+            print(f'{displ_fn:<20} {bs_written:>10} bytes {tot_t:>10.2f} s',print_additional)
         self.print_notices()
 
 dbaccess,mode,outdir,*more=sys.argv[1:]

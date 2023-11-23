@@ -84,8 +84,7 @@ the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 
 Zoom range|Server usability|Client usability
 ---|---|---
-0-3|only `mktiles.py`, minutes to hours per tile|between 500KB/tile and ~1500KB/tile: usable
-4-5|only `mktiles.py`, minutes to hours per tile|sometimes 1MB/tile but can be looked at
+0-5|only `mktiles.py`, minutes to hours per tile|below 500KB/tile, usable
 6-10|recommend file caching because multiple seconds to minutes to render,`mktiles.py` or `pg_tileserv`|rendering is responsive, <500KB/tile usually
 11-15|live serving possible, size is usually <500KB/tile mapbox recommendation|rendering is responsive
 16-22|no work to do|excellent: no need for network once z15 visited
@@ -97,7 +96,8 @@ in the middle of the ocean that's 0% but e.g `4/7/5.pbf` covering
 Ireland, UK and France is 19.629% landarea. And `4/11/5.pbf` covering Kazakhstan is 100% landarea.
 
 When it takes multiple minutes per tile, `pg_tileserv` will just timeout.
-And if there is too much data it makes some kind of I/O error
+And if there is too much data (>1MB/tile but the point where most tiles are
+below that threshold is reached) it makes some kind of I/O error
 
 ### Not finished
 

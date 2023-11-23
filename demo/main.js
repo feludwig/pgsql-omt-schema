@@ -14,10 +14,9 @@ function popup_text(f) {
   p['map_layer']=f.sourceLayer;
   return Object.keys(p).map(k=>k+'='+p[k]).join('<br>');
 }
-
 function enable_cycle_routes() {
   var layer_ids=[];
-  fetch('demo/styles/cyclo-routes.json').then(r=>r.json()).then(function(c) {
+  fetch(document.cyclo_routes_json).then(r=>r.json()).then(function(c) {
     // no new sources, but add a stub for the copyright attribution
     document.map.addSource("cycle-routes-stub",c.sources[Object.keys(c.sources)[0]]);
     c.layers.forEach(l=>{
@@ -27,14 +26,14 @@ function enable_cycle_routes() {
       } else {
         document.map.addLayer(l);
       }
-      document.map.setLayoutProperty(l.id,'visibility','none');
+      document.map.setLayoutProperty(l.id,'visibility','visible');
       layer_ids.push(l.id);
     });
   });
   //enable cyclecheckbox
   var chb=document.querySelector('#cyclecheckbox');
   chb.disabled=false;
-  chb.checked=false;
+  chb.checked=true;
   chb.onchange=function (e) {
     console.log(e);
     var setVis='none';
@@ -49,7 +48,7 @@ function enable_cycle_routes() {
 
 function enable_contours() {
   // append contours to current map
-  fetch('demo/styles/contours.json').then(r=>r.json()).then(function(c) {
+  fetch(document.contours_json).then(r=>r.json()).then(function(c) {
     Object.keys(c.sources).forEach(k=>{
         document.map.addSource(k,c.sources[k]);
     });
@@ -79,10 +78,9 @@ function enable_tilebounds_checkbox() {
     document.map.showTileBoundaries=tbc.checked;
   };
 }
-
 function add_lhc_test() {
   layer_name='lhc_test';
-  fetch('demo/lhc.geojson').then(r=>r.json()).then(g=>{
+  fetch(document.lhc_geojson).then(r=>r.json()).then(g=>{
     console.log(g);
     document.map.addSource(layer_name,{
       type:'geojson',
@@ -101,8 +99,8 @@ function add_lhc_test() {
   });
 }
 
-
 function add_geojson_playground() {
+  document.querySelector('button#clear_playground').disabled=true;
   // can be re-added without wiping data
   // add geojson playground layer
   if (document.playground_data==null) {
@@ -278,6 +276,7 @@ function add_click_listener() {
       if (f.source=='playground') {
         return;
       }
+      //if (curr_ix<feature_ix && ! ['school','residential'].includes(f.properties.class)) {
       if (curr_ix<feature_ix) {
         feature_ix=curr_ix;
         selected_feature=f;
@@ -291,11 +290,24 @@ function add_click_listener() {
 
     var pp=new maplibregl.Popup();
     pp.setLngLat(get_centerpoint(f.geometry)).setHTML(popup_text(f)).addTo(document.map);
+    if (typeof lookup_add_text !='undefined') {
+      lookup_add_text(f,pp);
+    }
     document.map.getSource('playground').setData(document.playground_data);
+    if (f.geometry.type!='Point') {
+      document.querySelector('button#clear_playground').disabled=false;
+    }
   });
 }
 
+function clear_playground() {
+  document.playground_data.features=[];
+  document.map.getSource('playground').setData(document.playground_data);
+  document.querySelector('button#clear_playground').disabled=true;
+}
+
 function add_relief() {
+  document.querySelector('button#add_relief').disabled=true;
   document.map.addSource('terrarium',{
       "type": "raster-dem",
       "tiles": [
@@ -370,13 +382,6 @@ function add_name_controls() {
 
 function main() {
   document.querySelectorAll('input,button,select').forEach((r)=>{r.disabled=true});
-  document.styles=[
-    // take the first as default on load
-    {name:'OpenStreetMap Carto',href:'demo/styles/openstreetmap-vector.json'},
-    {name:'OSM Bright',href:'demo/styles/osm-bright.json'},
-    {name:'MapTiler Basic',href:'demo/styles/maptiler-basic.json'},
-    {name:'OSM Bright cyclo',href:'demo/styles/cyclo-bright.json'},
-  ];
   try {
     document.map = new maplibregl.Map({
       container: 'map',

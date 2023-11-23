@@ -370,9 +370,10 @@ for tile_item in tiles_generator :
     tix+=1
 
 [t.set_zooms(encountered_zooms) for t in ts]
+print("starting",len(ts),"threads...")
 [t.start() for t in ts]
 #working...
-[t.join() for t in ts]
+[print("joined thread",ix,"status",'ok' if t.join()==None else 'err') for ix,t in enumerate(ts)]
 
 total_z_bytes={z:sum(t.total_written[z] for t in ts) for z in encountered_zooms}
 total_bytes=sum([v for z,v in total_z_bytes.items()])

@@ -276,8 +276,8 @@ function add_click_listener() {
       if (f.source=='playground') {
         return;
       }
-      //if (curr_ix<feature_ix && ! ['school','residential'].includes(f.properties.class)) {
-      if (curr_ix<feature_ix) {
+      // accept/ignore all clicks on class='residential's
+      if (curr_ix<feature_ix && (true || ! ['residential'].includes(f.properties.class))) {
         feature_ix=curr_ix;
         selected_feature=f;
       }
@@ -386,9 +386,9 @@ function main() {
     document.map = new maplibregl.Map({
       container: 'map',
       style: document.styles[0].href, // stylesheet location
-      // weiningen, zurich, switzerland
-      center: [8.43,47.42],
-      zoom: 15,
+      // limattal, zurich, switzerland
+      center: [8.4628, 47.3918],
+      zoom: 11.6,
       // show # in url, when copying the url the lat,lon,zoom,tilt,rotation position is included
       hash: true,
     });

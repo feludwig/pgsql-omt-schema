@@ -611,21 +611,21 @@ FROM (SELECT
   OR {{polygon.leisure_v}} IN ('park','garden','golf_course')
   OR {{polygon.wetland_v}} IN ('bog','swamp','wet_meadow','marsh','reedbed','slatern','tidalflat','saltmarsh','mangrove')
   ) AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
-    (z>=14) OR
-    (z=13 AND {{polygon.way_area_v}}>1500) OR
-    (z=12 AND {{polygon.way_area_v}}>6000) OR
-    (z=11 AND {{polygon.way_area_v}}>25e3) OR
-    (z=10 AND {{polygon.way_area_v}}>130e3) OR
-    (z=09 AND {{polygon.way_area_v}}>600e3) OR
-    (z=08 AND {{polygon.way_area_v}}>1e6) OR
-    (z=07 AND {{polygon.way_area_v}}>1.8e6) OR
+    (z>=14)
+    OR (z=13 AND {{polygon.way_area_v}}>1500)
+    OR (z=12 AND {{polygon.way_area_v}}>6000)
+    OR (z=11 AND {{polygon.way_area_v}}>25e3)
+    OR (z=10 AND {{polygon.way_area_v}}>130e3)
+    OR (z=09 AND {{polygon.way_area_v}}>600e3)
+    OR (z=08 AND {{polygon.way_area_v}}>1e6)
+    OR (z=07 AND {{polygon.way_area_v}}>1.8e6)
       -- polar regions! srid=8857 is area-preserving and area_8857~=area_3857 at EQUATOR ONLY
       -- for performance: check way_area a tenth smaller too
-    (z=06 AND {{polygon.way_area_v}}>800e2 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>800e3) OR
-    (z=05 AND {{polygon.way_area_v}}>1e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>1.7e6) OR
-    (z=04 AND {{polygon.way_area_v}}>2e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>2.1e6) OR
-    (z=03 AND {{polygon.way_area_v}}>4e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>4e6) OR
-    (z=02 AND {{polygon.way_area_v}}>7e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>7e6)
+    OR (z=06 AND {{polygon.way_area_v}}>800e2 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>800e3)
+    OR (z=05 AND {{polygon.way_area_v}}>1e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>1.7e6)
+    OR (z=04 AND {{polygon.way_area_v}}>2e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>2.1e6)
+    OR (z=03 AND {{polygon.way_area_v}}>4e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>4e6)
+    OR (z=02 AND {{polygon.way_area_v}}>7e5 AND ST_Area(ST_Transform({{polygon.way_v}},8857))>7e6)
     -- show nothing at lower zooms
   )
   GROUP BY(subclass)
@@ -698,7 +698,17 @@ FROM (
   FROM {{polygon.table_name}}
   WHERE ({{polygon.boundary_v}} IN ('national_park','protected_area')
       OR {{polygon.leisure_v}}='nature_reserve')
-    AND ST_Intersects({{polygon.way_v}},bounds_geom)) AS foo
+    AND ST_Intersects({{polygon.way_v}},bounds_geom) AND (
+      --same as landcover
+    (z>=14)
+    OR (z=13 AND {{polygon.way_area_v}}>1500)
+    OR (z=12 AND {{polygon.way_area_v}}>6000)
+    OR (z=11 AND {{polygon.way_area_v}}>25e3)
+    OR (z=10 AND {{polygon.way_area_v}}>130e3)
+    OR (z=09 AND {{polygon.way_area_v}}>600e3)
+    OR (z=08 AND {{polygon.way_area_v}}>1e6)
+    OR (z=07 AND {{polygon.way_area_v}}>1.8e6)
+  )) AS foo
 WHERE (z>=07)
 GROUP BY(class,name);
 $$
@@ -912,14 +922,19 @@ SELECT housenumber,
       WHEN tablefrom = 'point' THEN way
       ELSE ST_PointOnSurface(way) END),bounds_geom {{bounds_geom_options}}) AS geom
 FROM (
-  SELECT {{line.housenumber}},{{line.way}},'line' AS tablefrom FROM {{line.table_name}}
+  SELECT {{line.housenumber}},{{line.way}},'line' AS tablefrom,{{line.demolished_building}}
+  FROM {{line.table_name}}
   UNION ALL
-  SELECT {{point.housenumber}},{{point.way}},'point' AS tablefrom FROM {{point.table_name}}
+  SELECT {{point.housenumber}},{{point.way}},'point' AS tablefrom,{{point.demolished_building}}
+  FROM {{point.table_name}}
   UNION ALL
-  SELECT {{polygon.housenumber}},{{polygon.way}},'polygon' AS tablefrom FROM planet_osm_polygon)
+  SELECT {{polygon.housenumber}},{{polygon.way}},'polygon' AS tablefrom,
+  {{polygon.demolished_building}}
+  FROM {{polygon.table_name}})
     AS layer_housenumber
   -- obviously don't scan on the ST_PointOnSurface(way) because those are not indexed
-WHERE housenumber IS NOT NULL AND ST_Intersects(way,bounds_geom) AND z>=14;
+WHERE housenumber IS NOT NULL AND (demolished_building='no' OR demolished_building IS NULL)
+  AND ST_Intersects(way,bounds_geom) AND z>=14;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
@@ -1226,10 +1241,11 @@ WHERE (
   OR (z>=11 AND substring(class,'([a-z]+)') IN ('tertiary','minor'))
   OR (z>=10 AND substring(class,'([a-z]+)') IN ('transit'))
   OR (z>=09 AND substring(class,'([a-z]+)') IN ('secondary','raceway','busway','aerialway'))
-  OR (z>=07 AND substring(class,'([a-z]+)') IN ('primary','ferry','rail'))
+  OR (z>=08 AND substring(class,'([a-z]+)') IN ('primary'))
+  OR (z>=07 AND substring(class,'([a-z]+)') IN ('ferry','rail'))
   OR (z>=04 AND substring(class,'([a-z]+)') IN ('motorway','trunk'))
     --extension
-  OR (z>=06 AND class='bicycle_route' AND network='national')
+  OR (z>=08 AND class='bicycle_route' AND network='national')
   OR (z>=11 AND class='bicycle_route' AND network='local')
   OR (z>=10 AND class='bicycle_route' AND network='regional')
 );
@@ -1249,8 +1265,9 @@ WITH aa AS (
   aa_line AS (SELECT * FROM aa WHERE tablefrom='line'),
   aa_rest AS (SELECT * FROM aa WHERE tablefrom!='line')
 {% for cte_name,geom_agg_run in (
-  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2))'),
-  ('aa_rest','ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom)))')) %}
+  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterWithin(geom,10)),2))'),
+  ('aa_rest','ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom)))'))
+  %}
 {% if loop.index>1 %} --indexing starts at 1
   UNION --separator between loops
 {% endif %}
@@ -1260,17 +1277,17 @@ SELECT
 {% endif %}
   class,subclass,
   (array_agg(DISTINCT network))[1] AS network,NULL AS brunnel,
-  (array_agg(DISTINCT oneway))[1] AS oneway,min(ramp) AS ramp,
-  (array_agg(DISTINCT service))[1] AS service,
-  (array_agg(DISTINCT access))[1] AS access,max(toll) AS toll,
+  NULL::int AS oneway,NULL::int AS ramp,NULL AS service,
+  NULL::bool AS access,max(toll) AS toll,
   max(expressway) AS expressway,
   {% if transportation_with_cycleway %} max(cycleway) AS cycleway, {% endif %}
-  NULL::int AS layer,(array_agg(DISTINCT level))[1] AS level,
-  max(indoor) AS indoor,(array_agg(DISTINCT bicycle))[1] AS bicycle,
+  NULL::int AS layer,NULL AS level, NULL::int AS indoor,
+  (array_agg(DISTINCT bicycle))[1] AS bicycle,
   (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
   (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_SimplifyPreserveTopology({{geom_agg_run}},
-    CASE WHEN z>=07 THEN 15 WHEN z=06 THEN 20 WHEN z=5 THEN 25 END) AS geom
+    CASE WHEN z>=09 THEN 10 WHEN z=08 THEN 17 WHEN z<=07 THEN 32
+      END) AS geom
 FROM {{cte_name}}
 GROUP BY(class,subclass)
 {% endfor %}
@@ -1289,7 +1306,7 @@ WITH aa AS (
   aa_line AS (SELECT * FROM aa WHERE tablefrom='line'),
   aa_rest AS (SELECT * FROM aa WHERE tablefrom!='line')
 {% for cte_name,geom_agg_run in (
-  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(geom)),2))'),
+  ('aa_line','ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterWithin(geom,10)),2))'),
   ('aa_rest','ST_UnaryUnion(unnest(ST_ClusterIntersecting(geom)))')) %}
 {% if loop.index>1 %} --indexing starts at 1
   UNION --separator between loops
@@ -1448,7 +1465,11 @@ RETURNS setof {{omt_typ_pref}}_waterway
 AS $$
 SELECT name, {{name_columns_aggregate_run}} class,
   (CASE WHEN z<=10 THEN NULL ELSE brunnel END) AS brunnel,intermittent,
-  ST_AsMVTGeom(ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),bounds_geom {{bounds_geom_options}}) AS geom
+  ST_SimplifyPreserveTopology(ST_AsMVTGeom(
+    ST_LineMerge(ST_CollectionExtract(unnest(ST_ClusterIntersecting(way)),2)),
+    --ST_UnaryUnion(unnest(ST_ClusterIntersecting(way))),
+    bounds_geom {{bounds_geom_options}}),CASE WHEN z>=09 THEN 0
+      WHEN z=08 THEN 10 WHEN z=07 THEN 15 END) AS geom
 FROM (
   SELECT {{line.name}},{{line.tags}},{{line.waterway_v}} AS class,
     (CASE

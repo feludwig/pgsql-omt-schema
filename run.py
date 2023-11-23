@@ -164,12 +164,14 @@ aliases={
         'iso3166_1':'ISO3166-1',
         'mtb_scale':'mtb:scale',
         'name_en':'name:en',
+        'demolished_building':'demolished:building',
     },
     'line':{
         'housenumber':'addr:housenumber',
         'mtb_scale':'mtb:scale',
         'iso3166_1_alpha2':'ISO3166-1:alpha2',
         'iso3166_1':'ISO3166-1',
+        'demolished_building':'demolished:building',
     },
     'polygon':{
         'housenumber':'addr:housenumber',
@@ -181,6 +183,7 @@ aliases={
         'iso3166_1_alpha2':'ISO3166-1:alpha2',
         'iso3166_1':'ISO3166-1',
         'mtb_scale':'mtb:scale',
+        'demolished_building':'demolished:building',
     },
 }
 
@@ -199,6 +202,7 @@ need_columns={
         'horse','bicycle','toll','oneway','ramp','bridge',
         'tunnel','ford','service','expressway','mtb_scale',
         'country_code_iso3166_1_alpha_2','name_en',
+        'demolished_building',
 
         'way', 'tags', 'osm_id',
     ),
@@ -213,6 +217,7 @@ need_columns={
         'expressway', 'layer', 'level', 'indoor','country_code_fips',
         'iso3166_1_alpha2','iso3166_1', 'housenumber', 'disputed',
         'disputed_name','country_code_iso3166_1_alpha_2',
+        'demolished_building',
 
         'way', 'tags', 'osm_id',
     ),
@@ -234,6 +239,7 @@ need_columns={
         'oneway','ramp','service','toll','expressway',
         'bicycle','foot','horse','mtb_scale','surface',
         'country_code_iso3166_1_alpha_2',
+        'demolished_building',
 
         'way_area', 'way', 'tags', 'osm_id',
     ),
@@ -604,7 +610,7 @@ if __name__=='__main__' :
     elif len(sys.argv)>2 and sys.argv[2]=='--contours' :
         run_sql_script(c,sql_contours_script)
         c.execute('COMMIT;')
-    elif len(sys.argv)==1 :
+    elif len(sys.argv)==2 :
         run_sql_script(c,sql_functions_script)
         print('test tile',[tmpl_defined['test_'+k] for k in 'zxy'])
         print_stats(c)

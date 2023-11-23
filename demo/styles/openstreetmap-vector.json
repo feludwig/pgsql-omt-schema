@@ -36,7 +36,7 @@
       "source-layer": "landuse",
       "minzoom": 7,
       "layout": {
-        "fill-sort-key": ["match",["get","class"],"pitch",2,1],
+        "fill-sort-key": ["match",["get","class"],["pitch","playground"],2,1],
         "visibility": "visible"
       },
       "paint": {

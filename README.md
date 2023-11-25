@@ -201,7 +201,7 @@ _Note_ : In another shell, run
 
 ```
 while sleep 1;do data="$(psql -d gis -p 5432 -c "select
-  round((100*blocks_done)::numeric/nullif(blocks_total,0),2)::text||'%' as progress,
+  round((100\*blocks_done)::numeric/nullif(blocks_total,0),2)::text||'%' as progress,
   pg_size_pretty(pg_relation_size(relid)) as tablesize,
   pg_size_pretty(pg_relation_size(index_relid)) as indexsize,command,phase,
   (select relname from pg_class where oid=index_relid) as indexname
@@ -222,7 +222,9 @@ Edit your map's `style.json` and replace the following:
         }
       },
 ```
+
 with
+
 ```
     "sources": {
         "openmaptiles": {
@@ -360,6 +362,37 @@ This is a balance between tile serving speed and disk usage/efficiency.
 
 Indexes only speed queries up by a little, but because they don't use that much space
 compared to data, I still recommend using them.
+
+#### Size
+
+[biggest_known_tiles](demo/biggest_known_tiles)
+is a list of at most one tile per zoom level that is the biggest.
+They should all be below 500KB, for client rendering perfomance and
+network latency.
+
+I figured out the Referrer header is restricted for the maptiler API,
+but you can look at the map in OSM bright style
+[here](https://openmaptiles.github.io/osm-bright-gl-style).
+Then setting `map.showTileBoundaries=true;` in the JS console shows the tilesize
+where you are looking at on the map.
+
+
+Some of the biggest pgsql-omt-schema tiles:
+
+
+Tile|pgsql-omt-schema Size|maptiler Size|maptiler link
+---|---|---|---
+4/8/5|480KB|745KB|           [#4.09/53.63/8.42](https://openmaptiles.github.io/osm-bright-gl-style/#4.09/53.63/8.42)
+5/26/13|775KB|912KB|       [#5.03/31.14/112.37](https://openmaptiles.github.io/osm-bright-gl-style/#5.03/31.14/112.37)
+6/33/22|414KB|1016KB|      [#6.03/47.571/7.472](https://openmaptiles.github.io/osm-bright-gl-style/#6.03/47.571/7.472)
+7/112/50|638KB|519KB|    [#7.03/36.247/136.139](https://openmaptiles.github.io/osm-bright-gl-style/#7.03/36.247/136.139)
+8/132/85|495KB|406KB|      [#8.02/51.423/6.395](https://openmaptiles.github.io/osm-bright-gl-style/#8.02/51.423/6.395)
+11/1058/726|660KB|113KB|[#11.27/46.2962/6.0357](https://openmaptiles.github.io/osm-bright-gl-style/#11.27/46.2962/6.0357)
+
+
+_Note_ : pgsql-omt-schema includes languages `local(name)`, `en`, `de`, `fr`, `ja`, `ar`, `ru`
+in this benchmark,
+whereas omt officially has `local(name)`, and adds only `name_de` and `name_en` for some layers.
 
 ### Feature parity
 

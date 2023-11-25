@@ -1276,15 +1276,14 @@ SELECT
     array_to_string((array_agg(DISTINCT osm_id ORDER BY osm_id ASC))[1:5],',') AS osm_id,
 {% endif %}
   class,subclass,
-  (array_agg(DISTINCT network))[1] AS network,NULL AS brunnel,
+  NULL AS network,NULL AS brunnel,
   NULL::int AS oneway,NULL::int AS ramp,NULL AS service,
   NULL::bool AS access,max(toll) AS toll,
   max(expressway) AS expressway,
   {% if transportation_with_cycleway %} max(cycleway) AS cycleway, {% endif %}
   NULL::int AS layer,NULL AS level, NULL::int AS indoor,
-  (array_agg(DISTINCT bicycle))[1] AS bicycle,
-  (array_agg(DISTINCT foot))[1] AS foot,(array_agg(DISTINCT horse))[1] AS horse,
-  (array_agg(DISTINCT mtb_scale))[1] AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
+  NULL AS bicycle,NULL AS foot,NULL AS horse,
+  NULL AS mtb_scale,(array_agg(DISTINCT surface))[1] AS surface,
   ST_SimplifyPreserveTopology({{geom_agg_run}},
     CASE WHEN z>=09 THEN 10 WHEN z=08 THEN 17 WHEN z<=07 THEN 32
       END) AS geom
@@ -1504,8 +1503,11 @@ WITH place_toomuch_cities AS (
       WHEN tablefrom='polygon' AND osm_id<0 THEN 'r'||(-osm_id)
       WHEN tablefrom='polygon' AND osm_id>0 THEN'w'||osm_id
     END) AS osm_id, {% endif %}
-    name,{{name_columns_run}} (CASE
-      WHEN capital_score=1 THEN 2 ELSE NULL
+    name,{{name_columns_run}}
+    (CASE
+      WHEN capital_score=1 THEN 2
+      WHEN admin_level=2 THEN 3 -- capitals just above already!
+      ELSE admin_level
     END) AS capital,class,iso_a2,
     -- 1e3*1.9^(mlt^1.08)
     ((power(1.9,power({{omt_func_pref}}_get_place_multiplier(class),1.08))::int*1e3)+
@@ -1522,10 +1524,11 @@ WITH place_toomuch_cities AS (
         {{polygon.country_code_fips_v}},{{polygon.country_code_iso3166_1_alpha_2_v}}) AS iso_a2,
       {{polygon.way}},
       -- 1 if place is a capital
-      coalesce({{polygon.capital_ctv}}='yes',({{polygon.admin_level_v}}::int<=2),false)::int AS capital_score,
+      coalesce({{polygon.capital_ctv}}='yes',false)::int AS capital_score,
       -- 1 if place is a province capital
       coalesce({{polygon.admin_centre_4_v}}='yes',({{polygon.admin_level_v}}::int<=4),
         false)::int AS province_score,
+      {{polygon.admin_level_v}}::int AS admin_level,
       {{omt_func_pref}}_text_to_int_null({{polygon.population_ctv}}) AS population,'polygon' AS tablefrom
     FROM {{polygon.table_name}}
     WHERE {{polygon.place_v}} IN ('island')
@@ -1537,8 +1540,10 @@ WITH place_toomuch_cities AS (
       COALESCE({{point.iso3166_1_alpha2_v}},{{point.iso3166_1_v}},
         {{point.country_code_fips_v}},{{point.country_code_iso3166_1_alpha_2_v}}) AS iso_a2,
       {{point.way}},
-      coalesce({{point.capital_ctv}}='yes',({{point.admin_level_v}}::int<=2),false)::int AS capital_score,
+      coalesce({{point.capital_ctv}}='yes',false)::int AS capital_score,
+      --coalesce({{point.capital_ctv}}='yes',({{point.admin_level_v}}::int<=2),false)::int AS capital_score,
       coalesce({{point.admin_centre_4_v}}='yes',({{point.admin_level_v}}::int<=4),false)::int AS province_score,
+      {{point.admin_level_v}}::int AS admin_level,
       {{omt_func_pref}}_text_to_int_null({{point.population_ctv}}) AS population,'point' AS tablefrom
     FROM {{point.table_name}}
     WHERE {{point.place_v}} IN ('continent','country','state','province','city','town','village',

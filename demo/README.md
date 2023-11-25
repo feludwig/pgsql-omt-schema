@@ -69,6 +69,8 @@ Basic starting style for omt-schema stylesheets, published by
 
 ### cyclo-bright
 
+See cyclo-routes below
+
 <https://github.com/leonardehrenfried/cyclo-bright-gl-style>
 
 

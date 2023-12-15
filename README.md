@@ -258,15 +258,15 @@ These lower zoom tiles also need to query a lot of data and so take multiple sec
 to generate, this is not comfortable for viewing.
 
 ```
-python3 mktiles.py 'dbname=gis port=5432' --range {/path/to/file/cache} {z} {x} {y}
+python3 mktiles.py {/path/to/file/cache} --range {z} {x} {y}
 ```
 or
 ```
-python3 mktiles.py 'dbname=gis port=5432' --range {/path/to/file/cache} {z}-{zEnd} {xmin}-{xmax} {ymin}-{ymax}
+python3 mktiles.py {/path/to/file/cache} --range {z}-{zEnd} {xmin}-{xmax} {ymin}-{ymax}
 ```
 or
 ```
-python3 mktiles.py 'dbname=gis port=5432' --list {/path/to/file/cache} < tiles_to_generate
+python3 mktiles.py {/path/to/file/cache} --list < tiles_to_generate
 ```
 
 ## Options

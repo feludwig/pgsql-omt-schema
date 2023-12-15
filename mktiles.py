@@ -19,27 +19,27 @@ import threading
 import queue
 import typing
 import statistics
+import argparse
 printer_lock=threading.Lock()
 make_cursor_lock=threading.Lock()
 
 import run #local
 
-format='pbf'
-
-
 #maximally parallelize database: new connections only
-def make_new_connection_cursor()->[psycopg2.extensions.connection,psycopg2.extensions.cursor] :
-    for i in range(5) :
-        try :
-            with make_cursor_lock :
-                access=psycopg2.connect(dbaccess)
-                return access,access.cursor()
-        except psycopg2.Error as err :
-            # wait and retry to connect to database
-            time.sleep(10)
-    print('Timed out after 50s trying to connect to database')
-    print(*access.notices,sep='\n')
-    os._exit(1)
+def make_new_connection_cursor(dbaccess:str)->[psycopg2.extensions.connection,psycopg2.extensions.cursor] :
+    def f() :
+        for i in range(5) :
+            try :
+                with make_cursor_lock :
+                    access=psycopg2.connect(dbaccess)
+                    return access,access.cursor()
+            except psycopg2.Error as err :
+                # wait and retry to connect to database
+                time.sleep(10)
+        print('Timed out after 50s trying to connect to database')
+        print(*access.notices,sep='\n')
+        os._exit(1)
+    return f
 
 def gen_zxy_readinput()->typing.Iterator[[int,int,int]] :
     while True :
@@ -98,9 +98,11 @@ def gen_zxy_range(z:str,x:str,y:str)->typing.Iterator[[int,int,int]] :
 class Writer(threading.Thread) :
     def __init__(self,get_access_new_cursor:typing.Callable[[],
             [psycopg2.extensions.connection,psycopg2.extensions.cursor]],
-            query_to_run:str,with_landarea_stats=True) :
+            query_to_run:str,outdir:str,format:str,with_landarea_stats=True) :
         threading.Thread.__init__(self)
         self.get_access_new_cursor=get_access_new_cursor
+        self.outdir=outdir
+        self.format=format #filename extension
         self.access,self.c=self.get_access_new_cursor()
         self.finished=False
         self.query=query_to_run
@@ -253,7 +255,11 @@ class Writer(threading.Thread) :
                 # else finish processing everything, but still keep sentinel in mind
                 self.todo.put((None,None,None))
                 continue # skip processing the None
-            self.process(z,x,y)
+            try :
+                self.process(z,x,y)
+            except BaseException as err :
+                self.print_notices()
+                raise err
 
     def join(self) :
         self.finished=True
@@ -285,11 +291,11 @@ class Writer(threading.Thread) :
                     #need to re-connect to database
                     self.access,self.c=self.get_access_new_cursor()
                 with printer_lock :
-                    print(f'{z:2}/{x}/{y}.{format}\t','failed SQL',repr(err),'retrying')
+                    print(f'{z:2}/{x}/{y}.{self.format}\t','failed SQL',repr(err),'retrying')
                 self.print_notices()
         if not success :
             with printer_lock :
-                print(f'{z:2}/{x}/{y}.{format}\t','retried 5 times, abandoning')
+                print(f'{z:2}/{x}/{y}.{self.format}\t','retried 5 times, abandoning')
             return
         result=[dict(zip([col.name for col in self.c.description],i)) for i in self.c.fetchall()]
 
@@ -309,10 +315,12 @@ class Writer(threading.Thread) :
 
         tot_t=time.time()-st_t
         while True :
-            dest_fn=f'{outdir}/{z}/{x}/{y}.{format}'
+            dest_fn=f'{self.outdir}/{z}/{x}/{y}.{self.format}'
             try :
-                if not os.path.exists(f'{outdir}/{z}/{x}') :
-                    os.makedirs(f'{outdir}/{z}/{x}',exist_ok=True)
+                if not os.path.exists(f'{self.outdir}/{z}/{x}') :
+                    os.makedirs(f'{self.outdir}/{z}/{x}',exist_ok=True)
+                if out_data==None :
+                    print('ERROR, query',repr(self.query),'returned NULL')
                 with open(dest_fn,'wb') as f:
                     bs_written=f.write(out_data)
                 break
@@ -331,33 +339,57 @@ class Writer(threading.Thread) :
             print(f'{displ_fn:<20} {bs_written:>10} bytes {tot_t:>10.2f} s',print_additional)
         self.print_notices()
 
+parser=argparse.ArgumentParser(prog='mktiles.py')
+
+parser.add_argument('out_dir',type=str,
+        help='Directory where tiles hierarchy starts: {out_dir}/{z}/{x}/{y}. Warning: need to have write permissions')
+parser.set_defaults(format='pbf')
+
+parser.add_argument('-r','--range',type=str,dest='range',nargs=3,
+        help="""z x y specification for range, format is {number} or {number}-{number} for a range or
+            zSpec:zStart-zEnd for z when specifying x and y at zSpec but only starting range at zStart""")
+parser.add_argument('-l','--list',dest='list',default=False,action='store_true',
+        help='Read tiles from input, one tile per line in "z x y" format')
+
+parser.add_argument('-c','--contours',dest='contours',default=False,action='store_true',
+        help='Instead of rendering public.omt_all(z,x,y), use public.contours_vector(z,x,y)')
+parser.add_argument('-s','--single',dest='single',type=str,
+        help='Use public.omt_all_single_layer(z,x,y,{single}) for rapidly debugging a single layer')
+parser.add_argument('--layers',dest='layers',type=str,
+        help='Like --single for rapidly debugging, but a comma-separated list eg --layers water,water_name,poi')
+
+
+parser.add_argument('-d','--dsn',dest='postgres_dsn',
+    default='dbname=gis port=5432',
+    help="The connection string to pass to psycopg2, default '%(default)s'")
+args=parser.parse_args()
+
+access=psycopg2.connect(args.postgres_dsn)
 dbaccess,mode,outdir,*more=sys.argv[1:]
-if mode=='--range' :
-    z,x,*y=more
-    y=y[0]
-    tiles_generator=gen_zxy_range(z,x,y)
-elif mode=='--list' :
+if hasattr(args,'range') :
+    tiles_generator=gen_zxy_range(*args.range)
+elif args.list :
     tiles_generator=gen_zxy_readinput()
 else :
-    print('unrecognized mode')
+    print('unrecognized mode, choose either --range or --list')
     exit(1)
 
 
 query_to_run=f'SELECT * FROM omt_all_with_stats(%s,%s,%s);'
-if '--contours' in more :
+if args.contours :
     query_to_run=f'SELECT * FROM contours_vector(%s,%s,%s);'
-elif '--single' in more :
-    layer_name=more[more.index('--single')+1]
-    query_to_run=f"SELECT omt_all_single_layer(%s,%s,%s,'{layer_name}');"
-elif '--layers' in more :
-    layer_names=more[more.index('--layers')+1].split(',')
+elif args.single!=None :
+    query_to_run=f"SELECT omt_all_single_layer(%s,%s,%s,'{args.single}');"
+elif args.layers!=None :
+    layer_names=args.layers.split(',')
     func_name='||'.join(f"omt_all_single_layer(%s,%s,%s,'{l}')" for l in layer_names)
     query_to_run='SELECT '+func_name+';'
 
 
 # "ERROR:  too many dynamic shared memory segments" if you have too
 #   many running concurrently, it seems 10 is good enough
-ts=[Writer(make_new_connection_cursor,query_to_run) for i in range(10)]
+ts=[Writer(make_new_connection_cursor(args.postgres_dsn),
+        query_to_run,args.out_dir,args.format) for i in range(10)]
 
 start_t=time.time()
 
@@ -381,5 +413,5 @@ total_z_count={z:sum(t.total_count[z] for t in ts) for z in encountered_zooms}
 print(total_z_count)
 print(round(total_bytes*1e-6,2),'MB total written')
 for z in encountered_zooms :
-    Writer.print_layer_stats(make_new_connection_cursor()[1],ts,z)
+    Writer.print_layer_stats(make_new_connection_cursor(args.postgres_dsn)()[1],ts,z)
 print(round(time.time()-start_t,1),'seconds')

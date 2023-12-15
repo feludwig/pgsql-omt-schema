@@ -5,8 +5,7 @@ From a osm2pgsql-imported rendering PostgreSQL+PostGIS database, serve omt-schem
 # Motivation
 
 Already running a raster rendering osm stack ? These SQL functions make it
-possible to also serve Mapbox
-vector tiles
+possible to also serve Mapbox vector tiles
 ([MVT](https://docs.mapbox.com/data/tilesets/guides/vector-tiles-standards/))
 in the openmaptiles vectortile schema
 ([omt-schema](https://openmaptiles.org/schema/)).
@@ -29,7 +28,6 @@ homepage of [openstreetmap](https://www.openstreetmap.org).
 
 #### Vector tile advantages over raster tiles
 
-* see [demo/main.js](demo/main.js) for samples
 * names of cities/roads/POIs etc can be switched over to other language
   (or take local name and add english internationalized name in parens below)
 * elevation data can be displayed in a richer way than "just" contours or hillshades:
@@ -38,6 +36,7 @@ homepage of [openstreetmap](https://www.openstreetmap.org).
   with a right-click+hold-and-drag
 * zoom levels are not discrete steps, but can be in a smooth range (eg z=15.68, impossible on raster).
   And the names/labels all scale continuously as well, instead of "jumping" in size like on a raster map
+* see [demo/main.js](demo/main.js) for samples
 
 
 # Requirements
@@ -57,7 +56,7 @@ of all needed columns is in the [run.py](run.py) driver: `need_columns` and `ali
 [at this point](#load-natural-earth-data),
 Natural Earth tables `ne_10m_*`, `ne_50m_*`, `ne_110m_*`.
 The already existing `ne_110m_admin_0_boundary_lines_land` will be overwritten with
-the geometry column name `way` (mapnik raster rendering default).
+the geometry column name `way` (this is the mapnik raster rendering default).
 
 * Table `water_polygons` exists and holds static data,
   as imported for use in the rendering pipeline
@@ -72,10 +71,10 @@ the geometry column name `way` (mapnik raster rendering default).
 the prefix (default `planet_osm_*`) configured by `osm2pgsql` can be anything.
 * All concerned geometry tables have their geometry column called `way`
   - (**planned**: just read `geometry_columns` table for the `way` column's name).
-* Your data is in english, if you imported custom data in german for example, `'attraktion'` in the
+* Your data is in english, if you imported custom data tags in german for example, `'attraktion'` in the
   column `tourismus` will **not** be recognized as a `tourism=attraction` and be ignored.
   Feature names are obviously recognized, but using `nein` and `ja` instead of `no` and `yes` for
-  boolean values like `indoor` is not planned for, and will fallback to `NULL` or false.
+  boolean values like `indoor` is not supported, and will fallback to `NULL` or false.
 
 
 # Status
@@ -101,8 +100,6 @@ below that threshold is reached) it makes some kind of I/O error
 
 ### Not finished
 
-* `run.py` argparse clean up CLI API
-* `run.py` template configuration: just editing the source is clumsy at best
 * see `TODO` comments in sql
 * see [Disclaimer](#Disclaimer)
 
@@ -134,7 +131,7 @@ Static data [lake_centerline.geojson](lake_centerline.geojson) is from
 <https://github.com/lukasmartinelli/osm-lakelines>
 
 ```
-python3 run.py 'dbname=gis port=5432' --lake
+python3 run.py -d 'dbname=gis port=5432' lakes
 ```
 
 ### Load [Natural Earth](https://www.naturalearthdata.com/downloads/) data
@@ -158,7 +155,7 @@ layers at low zooms, like oceans for layer `water` or country+province boundarie
 ### Create the SQL functions
 
 ```
-python3 run.py 'dbname=gis port=5432'
+python3 run.py create
 ```
 
 this will print some `NOTICE`s...
@@ -186,10 +183,10 @@ to run (up to 1h30-2h per piece on a planet database;
 there are around 25 of them, so up to 50h)
 
 If you want to read them through before:
-```python3 run.py 'dbname=gis port=5432' --index-print```
+```python3 run.py index --print```
 
 ```
-python3 run.py 'dbname=gis port=5432' --index
+python3 run.py index
 ```
 
 _Note_ : The index creation will block all writes to the currently indexing table.
@@ -274,46 +271,31 @@ python3 mktiles.py 'dbname=gis port=5432' --list {/path/to/file/cache} < tiles_t
 
 ## Options
 
-* `python3 run.py 'dbname=... ' --print` will just print the compiled template and not run anything
+* `python3 run.py -d 'dbname=... ' create --print` will just print the compiled template and not run anything
 (Though it will connect to the database to read which columns exist or not)
 
-* `python3 run.py 'dbname=... ' --index` will compile the template
+* `python3 run.py -d 'dbname=... ' index --print` will compile the template
 and generate indexes on the database for speeding up lookup times during rendering.
-Re-running will skip exising indexes (use `--index-drop` before to delete them).
+Re-running will skip exising indexes (use `index_drop` before to delete them).
 Info: this will use some space in the database.
 
 
 # Contours
 
 Not the omt schema, but still a rich addition to any map: elevation, represented as same-elevation contour lines.
-
+```
+python3 run.py contours
+```
 
 The `contours-function.sql` creates a `pg_tileserv`
 compatible sql function that returns data from a contours lines database
 ([setup guide](https://wiki.openstreetmap.org/wiki/Contour_relief_maps_using_mapnik#The_PostGIS_approach)).
 See [demo](#Demo) for implementation, with a stylesheet
 [demo/styles/contours.json](demo/styles/contours.json), adapted from the `contours.xml` in that guide.
+The contours layer alone is not that useful, instead
+to "append" contours over an already existing layer, see [demo/main.js](demo/main.js).
+
 This is independent of the omt-schema.
-
-## Javascript
-
-The contours layer alone is not useful. Add the following javascript to
-"append" contours to an already existing layer (present in [demo/main.js](demo/main.js)):
-```
-document.map.on('load',function() {
-  fetch('contours.json').then(r=>r.json()).then(function(c) {
-    Object.keys(c.sources).forEach(k=>{
-        document.map.addSource(k,c.sources[k]);
-    });
-    c.layers.forEach(l=>document.map.addLayer(l));
-  });
-});
-```
-_Note_ : Change `hostname` to your own in the sample `contours.json`.
-
-
-_Note_ : Make sure that the `"sources":{}` section does not contain a source
-name that conflicts with the underlying `style.json` (here `"openmaptiles"` vs `"contours"`)
 
 
 # Disclaimer

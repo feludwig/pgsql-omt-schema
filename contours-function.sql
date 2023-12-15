@@ -22,5 +22,4 @@ SELECT ST_AsMVT(premvt_contours,'heights') FROM premvt_contours;
 $$
 LANGUAGE 'sql' STABLE PARALLEL SAFE;
 
-SELECT length(public.contours_vector(15,17151,11469));
-
+SELECT length(public.contours_vector({{test_z}},{{test_x}},{{test_y}}));

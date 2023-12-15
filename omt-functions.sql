@@ -42,18 +42,22 @@
 
 
 -- TODO:
---  *move all table names to templated table names
---  * boundary: read from matview country_boundaries
+--  * water z<=07 do not simplify anymore? OR ST_MakeValid!!!
+--  -> benchmark tile 7/110/52 and 7/111/51
+--  * move all table names to templated table names
 --  * transportation minimum tolerance for st_collectoverlapping ? to join the
---        two lanes of motorways into one at z<10
---  * think about natural earth data: for now it works without... but
---    lowzooms are horribly unusable
+--      two lanes of motorways into one at z<10
+--      This procedure is more complicated... maybe a st_dumppoints+st_voronoilines...
+--      For now, just take both lanes of a highway
+--  * transportation_name route_1,2,3,4,5,6 columns? aggregate over gemetries and
+--      something.. CASE NOT NULL?
+--  * building color column...? IS NULL everywhere for now
+--  * poi agg_stop column IS NULL by default
+
 
 -- implementation details:
 --  see https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions#Inlining_conditions_for_table_functions
 --  for why this is mostly LANGUAGE 'sql' and not 'plpgsql'
-
-
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aerodrome_label CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_aeroway CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_boundary CASCADE;
@@ -75,12 +79,12 @@ DROP TYPE IF EXISTS {{omt_typ_pref}}_water_name CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_transportation_merged CASCADE;
 DROP TYPE IF EXISTS {{omt_typ_pref}}_water_merged CASCADE;
 
+
+
 -- BEWARE! the order of these columns is important.
 -- if you exchange two differently-typed columns, postgresql will not be happy,
 -- but the danger is when you exchange two same-type columns: postgresql will
 -- happily resturn you the wrong results...
-
-
 CREATE TYPE {{omt_typ_pref}}_transportation AS (
 {% if with_osm_id %} osm_id text, {% endif %}
   class text,
@@ -121,7 +125,7 @@ CREATE TYPE {{omt_typ_pref}}_transportation_name AS (
   level text,
   layer int,
   indoor int,
-  -- MISSING: route_x !!! horrible but ?
+  -- MISSING: route_x !!!
   geom geometry
 );
 
@@ -165,7 +169,6 @@ CREATE TYPE {{omt_typ_pref}}_aerodrome_label AS (
   iata text,
   icao text,
   ele integer,
-  -- not to do: ele_ft
   geom geometry
 );
 
@@ -220,7 +223,6 @@ CREATE TYPE {{omt_typ_pref}}_mountain_peak AS (
   {{name_columns_typ}}
   class text,
   ele integer,
-  -- not to do: ele_ft, customary_fr
   rank integer,
   geom geometry
 );
@@ -267,8 +269,10 @@ CREATE TYPE {{omt_typ_pref}}_water_merged AS (
   class text,
   intermittent integer,
   brunnel text,
-  way geometry, -- exceptionally, return the full geometry way, NOT the not yet truncated ST_AsMVTGeom()
-  tablefrom text --get_lakeline does not work on node osm_ids
+-- exceptionally, return the full geometry way, NOT the not yet truncated ST_AsMVTGeom()
+  way geometry,
+--get_lakeline does not work on node osm_ids, but still needs to differenciate way/rel osm_ids
+  tablefrom text
 );
 
 CREATE TYPE {{omt_typ_pref}}_water AS (
@@ -292,7 +296,7 @@ CREATE TYPE {{omt_typ_pref}}_waterway AS (
   name text,
   {{name_columns_typ}}
   class text,
-  brunnel text, -- TODO: only two-value possible
+  brunnel text,
   intermittent integer,
   geom geometry
 );
@@ -1046,6 +1050,7 @@ FROM (
       ELSE NULL
     END) AS expressway,
 {% if transportation_with_cycleway %}
+-- TODO: this is just a boolean; why not rewrite cycle-routes.json; should be simpler
     (CASE WHEN {{line.bicycle_v}} IN ('yes','1','designated','permissive') THEN 1
       WHEN {{line.bicycle_v}} IN ('no','dismount') THEN 0 ELSE NULL
       --TODO: why not tags->'cycleway' &+ tags->'cycleway:left' and tags->'cycleway:right' ?
@@ -1796,10 +1801,11 @@ FROM
 		NULL::int AS agg_stop, -- TODO: not implemented
 		level AS level,layer,
 		(CASE WHEN indoor IN ('yes','1') THEN 1 END) AS indoor,
-    -- EXTENSION/IMPROVEMENT
-    -- used for rewriting subclass
+    amenity,"natural",
+    -- EXTENSION/IMPROVEMENTs : start_date_year for score ordering,
+    --  man_made for class~tourism,attraction and rewriting subclass
     -- natural in quotes because it's also a numbertype: to not trip up postgres
-    amenity,"natural",man_made,
+    man_made,
     start_date_year,score,information,
     ST_AsMVTGeom((CASE WHEN tablefrom='point' THEN way
       WHEN tablefrom='polygon' THEN ST_PointOnSurface(way) END),bounds_geom {{bounds_geom_options}}) AS geom

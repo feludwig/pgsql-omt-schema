@@ -16,6 +16,12 @@ function popup_text(f) {
 }
 function enable_cycle_routes() {
   var layer_ids=[];
+  if (document.map.getSource('openmaptiles')==null) {
+    var chb=document.querySelector('#cyclecheckbox');
+    //chb.disabled=false;
+    chb.checked=false;
+    return;
+  }
   fetch(document.cyclo_routes_json).then(r=>r.json()).then(function(c) {
     // no new sources, but add a stub for the copyright attribution
     document.map.addSource("cycle-routes-stub",c.sources[Object.keys(c.sources)[0]]);
@@ -53,11 +59,14 @@ function enable_contours() {
         document.map.addSource(k,c.sources[k]);
     });
     c.layers.forEach(l=>document.map.addLayer(l));
+    if (!document.show_contours_by_default) {
+        c.layers.forEach(l=>document.map.setLayoutProperty(l.id,'visibility','none'));
+    }
   });
   //enable contourscheckbox
   var chb=document.querySelector('#contourscheckbox');
   chb.disabled=false;
-  chb.checked=true;
+  chb.checked=document.show_contours_by_default;
   chb.onchange=function (e) {
     console.log(e);
     var setVis='none';

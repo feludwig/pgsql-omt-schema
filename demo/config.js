@@ -7,5 +7,6 @@ document.styles=[
 ];
 document.lhc_geojson='demo/lhc.geojson';
 document.contours_json='demo/styles/contours.json';
+document.show_contours_by_default=true;
 document.cyclo_routes_json='demo/styles/cyclo-routes.json';
 

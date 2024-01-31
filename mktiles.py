@@ -37,7 +37,6 @@ def make_new_connection_cursor(dbaccess:str)->[psycopg2.extensions.connection,ps
                 # wait and retry to connect to database
                 time.sleep(10)
         print('Timed out after 50s trying to connect to database')
-        print(*access.notices,sep='\n')
         os._exit(1)
     return f
 
@@ -154,7 +153,9 @@ class Writer(threading.Thread) :
         per_layer_stats={}
         per_z_stats={'time':[],'size':[],'landarea_time':[],'landarea_size':[]}
         w_l_a=list_of_self[0].with_landarea_stats
+
         #collect all data
+        p_insert=()
         total_z_count=0
         total_z_landarea=0
         total_z_bytes=0
@@ -203,17 +204,10 @@ class Writer(threading.Thread) :
                 str(round(v[1]/v[0],1)),
                 get_size_pretty(round(v[2]/v[0],1)),str(round(v[3]/v[0])),
                 ) for k,v in per_layer_stats.items()]
-        p_insert=()
         if total_z_count==0 :
             print('ZeroDivisionError')
             return
-        if w_l_a :
-            p_insert=('avg_landarea',round(100*total_z_landarea/total_z_count,1),'%')
-        #print
-        print(f'z{z:02}',*p_insert,':')
-        run.print_table(data,headers)
-
-        print('total',round(total_z_bytes*1e-6,2),'MB, statistics for',total_z_count,'tiles :')
+        print(f'z{z:02}','total',round(total_z_bytes*1e-6,2),'MB, statistics for',total_z_count,'tiles :')
         #statistics
         rows={
             'time':lambda dgt,v:str(round(v,dgt))+'s/tile' if v!=None else '',
@@ -226,20 +220,26 @@ class Writer(threading.Thread) :
             rows.pop('landarea_size')
         stats_data=[]
         for r,get_fmt in rows.items() :
-            data={}
-            data['median']=(1,statistics.median(per_z_stats[r]))
+            s_data={}
+            s_data['median']=(1,statistics.median(per_z_stats[r]))
             if len(per_z_stats[k])>=2 :
-                data['stdev']=(2,statistics.stdev(per_z_stats[r]))
-                data['1_pcent']=(0,statistics.quantiles(per_z_stats[r],n=100)[-1])
-                data['1_pmil']=(0,statistics.quantiles(per_z_stats[r],n=1000)[-1])
+                s_data['stdev']=(2,statistics.stdev(per_z_stats[r]))
+                s_data['1_pcent']=(0,statistics.quantiles(per_z_stats[r],n=100)[-1])
+                s_data['1_pmil']=(0,statistics.quantiles(per_z_stats[r],n=1000)[-1])
             else :
-                data['stdev']=(2,None)
-                data['1_pcent']=(0,None)
-                data['1_pmil']=(0,None)
+                s_data['stdev']=(2,None)
+                s_data['1_pcent']=(0,None)
+                s_data['1_pmil']=(0,None)
             line=[r]
-            line.extend([get_fmt(r_dgts,v) for d_f,(r_dgts,v) in data.items()])
+            line.extend([get_fmt(r_dgts,v) for d_f,(r_dgts,v) in s_data.items()])
             stats_data.append(line)
         run.print_table(stats_data,('sample type','median','stdev','1% worst','0.1% worst'))
+
+        if w_l_a :
+            p_insert=('avg_landarea',round(100*total_z_landarea/total_z_count,1),'%')
+        #print
+        print(f'per layers',*p_insert,':')
+        run.print_table(data,headers)
 
 
     def run(self) :
@@ -335,7 +335,7 @@ class Writer(threading.Thread) :
             self.stats[z]['landarea_time'].append(tot_t/weight)
             self.stats[z]['landarea_size'].append(bs_written/weight)
         with printer_lock :
-            displ_fn=f'{z:2}/{x}/{y}.{format}'
+            displ_fn=f'{z:2}/{x}/{y}.{self.format}'
             print(f'{displ_fn:<20} {bs_written:>10} bytes {tot_t:>10.2f} s',print_additional)
         self.print_notices()
 
@@ -343,15 +343,20 @@ parser=argparse.ArgumentParser(prog='mktiles.py')
 
 parser.add_argument('out_dir',type=str,
         help='Directory where tiles hierarchy starts: {out_dir}/{z}/{x}/{y}. Warning: need to have write permissions')
+
 parser.set_defaults(format='pbf')
 
-parser.add_argument('-r','--range',type=str,dest='range',nargs=3,
+select_tiles=parser.add_mutually_exclusive_group(required=True)
+select_tiles.add_argument('-r','--range',type=str,dest='range',nargs=3,
         help="""z x y specification for range, format is {number} or {number}-{number} for a range or
             zSpec:zStart-zEnd for z when specifying x and y at zSpec but only starting range at zStart""")
-parser.add_argument('-l','--list',dest='list',default=False,action='store_true',
+select_tiles.add_argument('-l','--list',dest='list',default=False,action='store_true',
         help='Read tiles from input, one tile per line in "z x y" format')
 
-parser.add_argument('-c','--contours',dest='contours',default=False,action='store_true',
+source=parser.add_mutually_exclusive_group(required=False)
+source.add_argument('-m','--mapnik2mvt',dest='mapnik2mvt',default=False,action='store_true',
+        help='Instead of rendering public.omt_all(z,x,y), use public.mapnik_test_all(z,x,y)')
+source.add_argument('-c','--contours',dest='contours',default=False,action='store_true',
         help='Instead of rendering public.omt_all(z,x,y), use public.contours_vector(z,x,y)')
 parser.add_argument('-s','--single',dest='single',type=str,
         help='Use public.omt_all_single_layer(z,x,y,{single}) for rapidly debugging a single layer')
@@ -366,7 +371,7 @@ args=parser.parse_args()
 
 access=psycopg2.connect(args.postgres_dsn)
 dbaccess,mode,outdir,*more=sys.argv[1:]
-if hasattr(args,'range') :
+if args.range is not None :
     tiles_generator=gen_zxy_range(*args.range)
 elif args.list :
     tiles_generator=gen_zxy_readinput()
@@ -378,6 +383,8 @@ else :
 query_to_run=f'SELECT * FROM omt_all_with_stats(%s,%s,%s);'
 if args.contours :
     query_to_run=f'SELECT * FROM contours_vector(%s,%s,%s);'
+elif args.mapnik2mvt :
+    query_to_run=f'SELECT * FROM mapnik_test_all_with_stats(%s,%s,%s);'
 elif args.single!=None :
     query_to_run=f"SELECT omt_all_single_layer(%s,%s,%s,'{args.single}');"
 elif args.layers!=None :
@@ -389,7 +396,7 @@ elif args.layers!=None :
 # "ERROR:  too many dynamic shared memory segments" if you have too
 #   many running concurrently, it seems 10 is good enough
 ts=[Writer(make_new_connection_cursor(args.postgres_dsn),
-        query_to_run,args.out_dir,args.format) for i in range(10)]
+        query_to_run,args.out_dir,args.format) for i in range(8)]
 
 start_t=time.time()
 

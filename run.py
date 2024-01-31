@@ -500,7 +500,7 @@ def template_setup_languages(tmpl_defined,name_columns_languages) :
             annl.append(f'"name_{iso2}" IS NOT NULL')
             ts.append(f'name_{iso2} text,')
 
-            case_neq_name=f"\"tags\"->'name_{iso2}'"
+            case_neq_name=f"\"tags\"->'name:{iso2}'"
             case_neq_name=f'CASE WHEN "name"!=({case_neq_name}) THEN {case_neq_name} ELSE NULL END'
             fns.append(f'({case_neq_name}) AS name_{iso2},')
             aggr=lambda i:f'(array_agg(DISTINCT ({i}) ORDER BY ({i}) NULLS LAST))[1] AS "name_{iso2}",'
@@ -583,7 +583,7 @@ TEMPLATE_VARS={
 
 if __name__=='__main__' :
     parser=argparse.ArgumentParser(prog='run.py')
-    subparsers = parser.add_subparsers(title='subcommands',
+    subparsers = parser.add_subparsers(title='subcommands',required=True,
         help='mode to choose, see "%(prog)s [mode] --help" for options')
 
     for action,action_help in {
